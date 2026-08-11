@@ -93,60 +93,16 @@ export interface AppStoreData {
   isAdminAuthenticated: boolean;
 }
 
-const LOCAL_STORAGE_STORE_KEY = 'nurse_lab_memory_store_v1';
-
-function loadMemoryStoreFromStorage(): AppStoreData {
-  if (typeof window !== 'undefined') {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_STORE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && Array.isArray(parsed.labs) && parsed.labs.length > 0) {
-          return {
-            labs: parsed.labs,
-            inventory: parsed.inventory || INITIAL_INVENTORY,
-            bookings: parsed.bookings || INITIAL_BOOKINGS,
-            preInspections: parsed.preInspections || INITIAL_PRE_INSPECTIONS,
-            postInspections: parsed.postInspections || INITIAL_POST_INSPECTIONS,
-            damages: parsed.damages || INITIAL_DAMAGES,
-            isAdminAuthenticated: false
-          };
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load memory store from localStorage', e);
-    }
-  }
-  return {
-    labs: INITIAL_LABS,
-    inventory: INITIAL_INVENTORY,
-    bookings: INITIAL_BOOKINGS,
-    preInspections: INITIAL_PRE_INSPECTIONS,
-    postInspections: INITIAL_POST_INSPECTIONS,
-    damages: INITIAL_DAMAGES,
-    isAdminAuthenticated: false
-  };
-}
-
-// Memory fallback cache in runtime
-let memoryStore: AppStoreData = loadMemoryStoreFromStorage();
-
-function saveMemoryStoreToStorage() {
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_STORE_KEY, JSON.stringify({
-        labs: memoryStore.labs,
-        inventory: memoryStore.inventory,
-        bookings: memoryStore.bookings,
-        preInspections: memoryStore.preInspections,
-        postInspections: memoryStore.postInspections,
-        damages: memoryStore.damages
-      }));
-    } catch (e) {
-      console.error('Failed to save memory store to localStorage', e);
-    }
-  }
-}
+// Memory fallback cache in runtime memory (not per-browser localStorage to ensure cross-browser consistency)
+let memoryStore: AppStoreData = {
+  labs: INITIAL_LABS,
+  inventory: INITIAL_INVENTORY,
+  bookings: INITIAL_BOOKINGS,
+  preInspections: INITIAL_PRE_INSPECTIONS,
+  postInspections: INITIAL_POST_INSPECTIONS,
+  damages: INITIAL_DAMAGES,
+  isAdminAuthenticated: false
+};
 
 // =========================================
 // SUPABASE SERVICE LAYER (SINGLE SOURCE OF TRUTH)
@@ -193,26 +149,27 @@ export async function getLabs(): Promise<Laboratory[]> {
 
   try {
     const { data, error } = await client.from('laboratories').select('*').order('code', { ascending: true });
-    if (error || !data || data.length === 0) {
-      if (!data || data.length === 0) {
-        seedInitialLabs(client).catch(() => {});
+    if (!error && Array.isArray(data)) {
+      if (data.length === 0) {
+        await seedInitialLabs(client);
+        const { data: refetched } = await client.from('laboratories').select('*').order('code', { ascending: true });
+        if (refetched && refetched.length > 0) {
+          memoryStore.labs = refetched.map(mapLabRecord);
+          return memoryStore.labs;
+        }
+      } else {
+        memoryStore.labs = data.map(mapLabRecord);
+        return memoryStore.labs;
       }
-      return memoryStore.labs;
     }
-
-    const labs = data.map(mapLabRecord);
-    memoryStore.labs = labs;
-    saveMemoryStoreToStorage();
-    return labs;
   } catch (err) {
     console.error('getLabs exception:', err);
-    return memoryStore.labs;
   }
+  return memoryStore.labs;
 }
 
 export async function createLab(lab: Laboratory): Promise<Laboratory> {
   memoryStore.labs = [lab, ...memoryStore.labs.filter((l) => l.id !== lab.id)];
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -241,7 +198,6 @@ export async function createLab(lab: Laboratory): Promise<Laboratory> {
 
 export async function updateLab(lab: Laboratory): Promise<Laboratory> {
   memoryStore.labs = memoryStore.labs.map((l) => (l.id === lab.id ? lab : l));
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -269,7 +225,6 @@ export async function updateLab(lab: Laboratory): Promise<Laboratory> {
 
 export async function deleteLab(labId: string): Promise<void> {
   memoryStore.labs = memoryStore.labs.filter((l) => l.id !== labId);
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const { data, error } = await client.from('laboratories').delete().eq('id', labId).select();
@@ -289,50 +244,46 @@ export async function getBookings(): Promise<Booking[]> {
 
   try {
     const { data, error } = await client.from('bookings').select('*').order('created_at', { ascending: false });
-    if (error || !data || data.length === 0) {
+    if (!error && Array.isArray(data)) {
+      const formatted: Booking[] = data.map((item) => ({
+        id: String(item.id),
+        booking_code: String(item.booking_code || ''),
+        requester_name: String(item.requester_name || ''),
+        department: String(item.department || ''),
+        faculty: String(item.faculty || ''),
+        phone: String(item.phone || ''),
+        email: String(item.email || ''),
+        subject_code: String(item.subject_code || ''),
+        subject_name: String(item.subject_name || ''),
+        activity_name: String(item.activity_name || ''),
+        objective: String(item.objective || ''),
+        participant_count: Number(item.participant_count || 1),
+        lab_id: String(item.lab_id || ''),
+        lab_name: String(item.lab_name || ''),
+        booking_date: String(item.booking_date || ''),
+        start_time: String(item.start_time || ''),
+        end_time: String(item.end_time || ''),
+        status: item.status || 'pending',
+        consumables: item.consumables || [],
+        medical_equipment: item.medical_equipment || [],
+        assets: item.assets || [],
+        terms_accepted: Boolean(item.terms_accepted ?? true),
+        rejection_reason: item.rejection_reason,
+        pre_inspection_done: Boolean(item.pre_inspection_done ?? false),
+        post_inspection_done: Boolean(item.post_inspection_done ?? false),
+        created_at: String(item.created_at || new Date().toISOString())
+      }));
+      memoryStore.bookings = updateDynamicStatuses(formatted, memoryStore.postInspections);
       return memoryStore.bookings;
     }
-    console.log('LOAD RESULT', data);
-    const formatted: Booking[] = (data || []).map((item) => ({
-      id: String(item.id),
-      booking_code: String(item.booking_code || ''),
-      requester_name: String(item.requester_name || ''),
-      department: String(item.department || ''),
-      faculty: String(item.faculty || ''),
-      phone: String(item.phone || ''),
-      email: String(item.email || ''),
-      subject_code: String(item.subject_code || ''),
-      subject_name: String(item.subject_name || ''),
-      activity_name: String(item.activity_name || ''),
-      objective: String(item.objective || ''),
-      participant_count: Number(item.participant_count || 1),
-      lab_id: String(item.lab_id || ''),
-      lab_name: String(item.lab_name || ''),
-      booking_date: String(item.booking_date || ''),
-      start_time: String(item.start_time || ''),
-      end_time: String(item.end_time || ''),
-      status: item.status || 'pending',
-      consumables: item.consumables || [],
-      medical_equipment: item.medical_equipment || [],
-      assets: item.assets || [],
-      terms_accepted: Boolean(item.terms_accepted ?? true),
-      rejection_reason: item.rejection_reason,
-      pre_inspection_done: Boolean(item.pre_inspection_done ?? false),
-      post_inspection_done: Boolean(item.post_inspection_done ?? false),
-      created_at: String(item.created_at || new Date().toISOString())
-    }));
-    memoryStore.bookings = updateDynamicStatuses(formatted, memoryStore.postInspections);
-    saveMemoryStoreToStorage();
-    return memoryStore.bookings;
   } catch (err) {
     console.error('getBookings exception:', err);
-    return memoryStore.bookings;
   }
+  return memoryStore.bookings;
 }
 
 export async function createBooking(booking: Booking): Promise<Booking> {
   memoryStore.bookings = [booking, ...memoryStore.bookings.filter((b) => b.id !== booking.id)];
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -375,7 +326,6 @@ export async function createBooking(booking: Booking): Promise<Booking> {
 
 export async function updateBooking(booking: Booking): Promise<Booking> {
   memoryStore.bookings = memoryStore.bookings.map((b) => (b.id === booking.id ? booking : b));
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -419,7 +369,6 @@ export async function updateBooking(booking: Booking): Promise<Booking> {
 
 export async function deleteBooking(bookingId: string): Promise<void> {
   memoryStore.bookings = memoryStore.bookings.filter((b) => b.id !== bookingId);
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -438,29 +387,29 @@ export async function deleteBooking(bookingId: string): Promise<void> {
 // --- Pre-Inspections ---
 export async function getPreInspections(): Promise<PreInspection[]> {
   const client = getSupabaseClient();
-  if (!client) return memoryStore.preInspections;
 
   try {
     const { data, error } = await client.from('pre_inspection').select('*').order('created_at', { ascending: false });
-    if (error || !data) return memoryStore.preInspections;
-    memoryStore.preInspections = data.map((item) => ({
-      id: item.id,
-      booking_id: item.booking_id,
-      inspection_date: item.inspection_date,
-      inspector_name: item.inspector_name,
-      notes: item.notes || '',
-      images: item.images || [],
-      consumables_checked: item.consumables_checked ?? true,
-      equipment_checked: item.equipment_checked ?? true,
-      assets_checked: item.assets_checked ?? true,
-      status: item.status || 'pass',
-      created_at: item.created_at || new Date().toISOString()
-    }));
-    saveMemoryStoreToStorage();
-    return memoryStore.preInspections;
+    if (!error && Array.isArray(data)) {
+      memoryStore.preInspections = data.map((item) => ({
+        id: String(item.id),
+        booking_id: String(item.booking_id || ''),
+        inspection_date: String(item.inspection_date || ''),
+        inspector_name: String(item.inspector_name || ''),
+        notes: String(item.notes || ''),
+        images: item.images || [],
+        consumables_checked: item.consumables_checked ?? true,
+        equipment_checked: item.equipment_checked ?? true,
+        assets_checked: item.assets_checked ?? true,
+        status: item.status || 'pass',
+        created_at: String(item.created_at || new Date().toISOString())
+      }));
+      return memoryStore.preInspections;
+    }
   } catch (err) {
-    return memoryStore.preInspections;
+    console.error('getPreInspections exception:', err);
   }
+  return memoryStore.preInspections;
 }
 
 export async function createPreInspection(inspection: PreInspection): Promise<PreInspection> {
@@ -468,7 +417,6 @@ export async function createPreInspection(inspection: PreInspection): Promise<Pr
   memoryStore.bookings = memoryStore.bookings.map((b) =>
     b.id === inspection.booking_id ? { ...b, pre_inspection_done: true } : b
   );
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -499,7 +447,6 @@ export async function createPreInspection(inspection: PreInspection): Promise<Pr
 
 export async function updatePreInspection(inspection: PreInspection): Promise<PreInspection> {
   memoryStore.preInspections = memoryStore.preInspections.map((p) => (p.id === inspection.id ? inspection : p));
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -523,7 +470,6 @@ export async function updatePreInspection(inspection: PreInspection): Promise<Pr
 
 export async function deletePreInspection(inspectionId: string): Promise<void> {
   memoryStore.preInspections = memoryStore.preInspections.filter((p) => p.id !== inspectionId);
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -537,29 +483,28 @@ export async function deletePreInspection(inspectionId: string): Promise<void> {
 // --- Post-Inspections ---
 export async function getPostInspections(): Promise<PostInspection[]> {
   const client = getSupabaseClient();
-  if (!client) return memoryStore.postInspections;
 
   try {
     const { data, error } = await client.from('post_inspection').select('*').order('created_at', { ascending: false });
-    if (error || !data) return memoryStore.postInspections;
-    console.log('LOAD RESULT', data);
-    memoryStore.postInspections = data.map((item) => ({
-      id: item.id,
-      booking_id: item.booking_id,
-      inspection_date: item.inspection_date,
-      inspector_name: item.inspector_name,
-      consumables_status: item.consumables_status || 'complete',
-      equipment_status: item.equipment_status || 'complete',
-      assets_status: item.assets_status || 'complete',
-      notes: item.notes || '',
-      images: item.images || [],
-      created_at: item.created_at || new Date().toISOString()
-    }));
-    saveMemoryStoreToStorage();
-    return memoryStore.postInspections;
+    if (!error && Array.isArray(data)) {
+      memoryStore.postInspections = data.map((item) => ({
+        id: String(item.id),
+        booking_id: String(item.booking_id || ''),
+        inspection_date: String(item.inspection_date || ''),
+        inspector_name: String(item.inspector_name || ''),
+        consumables_status: item.consumables_status || 'complete',
+        equipment_status: item.equipment_status || 'complete',
+        assets_status: item.assets_status || 'complete',
+        notes: String(item.notes || ''),
+        images: item.images || [],
+        created_at: String(item.created_at || new Date().toISOString())
+      }));
+      return memoryStore.postInspections;
+    }
   } catch (err) {
-    return memoryStore.postInspections;
+    console.error('getPostInspections exception:', err);
   }
+  return memoryStore.postInspections;
 }
 
 export async function createPostInspection(inspection: PostInspection): Promise<PostInspection> {
@@ -567,7 +512,6 @@ export async function createPostInspection(inspection: PostInspection): Promise<
   memoryStore.bookings = memoryStore.bookings.map((b) =>
     b.id === inspection.booking_id ? { ...b, status: 'completed' as const, post_inspection_done: true } : b
   );
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -597,7 +541,6 @@ export async function createPostInspection(inspection: PostInspection): Promise<
 
 export async function updatePostInspection(inspection: PostInspection): Promise<PostInspection> {
   memoryStore.postInspections = memoryStore.postInspections.map((p) => (p.id === inspection.id ? inspection : p));
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -620,7 +563,6 @@ export async function updatePostInspection(inspection: PostInspection): Promise<
 
 export async function deletePostInspection(inspectionId: string): Promise<void> {
   memoryStore.postInspections = memoryStore.postInspections.filter((p) => p.id !== inspectionId);
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -634,34 +576,32 @@ export async function deletePostInspection(inspectionId: string): Promise<void> 
 // --- Damages ---
 export async function getDamages(): Promise<DamageLog[]> {
   const client = getSupabaseClient();
-  if (!client) return memoryStore.damages;
 
   try {
     const { data, error } = await client.from('damages').select('*').order('created_at', { ascending: false });
-    if (error || !data) return memoryStore.damages;
-    console.log('LOAD RESULT', data);
-    memoryStore.damages = data.map((item) => ({
-      id: item.id,
-      booking_id: item.booking_id,
-      item_name: item.item_name,
-      item_type: item.item_type,
-      quantity: Number(item.quantity || 1),
-      unit_price: Number(item.unit_price || 0),
-      total_amount: Number(item.total_amount || 0),
-      responsible_person: item.responsible_person || '',
-      notes: item.notes || '',
-      created_at: item.created_at || new Date().toISOString()
-    }));
-    saveMemoryStoreToStorage();
-    return memoryStore.damages;
+    if (!error && Array.isArray(data)) {
+      memoryStore.damages = data.map((item) => ({
+        id: String(item.id),
+        booking_id: String(item.booking_id || ''),
+        item_name: String(item.item_name || ''),
+        item_type: item.item_type || 'consumable',
+        quantity: Number(item.quantity || 1),
+        unit_price: Number(item.unit_price || 0),
+        total_amount: Number(item.total_amount || 0),
+        responsible_person: String(item.responsible_person || ''),
+        notes: String(item.notes || ''),
+        created_at: String(item.created_at || new Date().toISOString())
+      }));
+      return memoryStore.damages;
+    }
   } catch (err) {
-    return memoryStore.damages;
+    console.error('getDamages exception:', err);
   }
+  return memoryStore.damages;
 }
 
 export async function createDamage(damage: DamageLog): Promise<DamageLog> {
   memoryStore.damages = [damage, ...memoryStore.damages];
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -690,7 +630,6 @@ export async function createDamage(damage: DamageLog): Promise<DamageLog> {
 
 export async function updateDamage(damage: DamageLog): Promise<DamageLog> {
   memoryStore.damages = memoryStore.damages.map((d) => (d.id === damage.id ? damage : d));
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -713,7 +652,6 @@ export async function updateDamage(damage: DamageLog): Promise<DamageLog> {
 
 export async function deleteDamage(damageId: string): Promise<void> {
   memoryStore.damages = memoryStore.damages.filter((d) => d.id !== damageId);
-  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -773,58 +711,80 @@ export function subscribeToStoreChanges(onStoreUpdate: (data: AppStoreData) => v
   const client = getSupabaseClient();
   const config = getSupabaseConfig();
 
+  let isSubscribed = true;
+
+  // Polling fallback every 3 seconds for guaranteed cross-browser synchronization
+  const intervalId = setInterval(async () => {
+    if (!isSubscribed) return;
+    const fresh = await fetchFullStore();
+    if (isSubscribed) onStoreUpdate(fresh);
+  }, 3000);
+
+  // Focus listener when user switches back to browser tab
+  const handleFocus = async () => {
+    if (!isSubscribed) return;
+    const fresh = await fetchFullStore();
+    if (isSubscribed) onStoreUpdate(fresh);
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', handleFocus);
+  }
+
+  let sseClose: (() => void) | null = null;
+
   // If connected to local origin REST endpoint, use EventSource SSE for realtime
   if (typeof window !== 'undefined' && (config.url.includes(window.location.host) || config.url.includes('localhost') || config.url === window.location.origin)) {
-    let eventSource: EventSource | null = null;
     try {
-      eventSource = new EventSource('/rest/v1/realtime');
+      const eventSource = new EventSource('/rest/v1/realtime');
       eventSource.onmessage = async (e) => {
         try {
           const parsed = JSON.parse(e.data);
           if (parsed.event === 'change') {
             const fresh = await fetchFullStore();
-            onStoreUpdate(fresh);
+            if (isSubscribed) onStoreUpdate(fresh);
           }
         } catch (err) {
           console.error('Realtime SSE parse error:', err);
         }
       };
+      sseClose = () => eventSource.close();
     } catch (e) {
       console.error('EventSource error:', e);
     }
-
-    return () => {
-      if (eventSource) {
-        eventSource.close();
-      }
-    };
   }
 
   const channel = client
     .channel('public-central-db')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'laboratories' }, async () => {
       const fresh = await fetchFullStore();
-      onStoreUpdate(fresh);
+      if (isSubscribed) onStoreUpdate(fresh);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, async () => {
       const fresh = await fetchFullStore();
-      onStoreUpdate(fresh);
+      if (isSubscribed) onStoreUpdate(fresh);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pre_inspection' }, async () => {
       const fresh = await fetchFullStore();
-      onStoreUpdate(fresh);
+      if (isSubscribed) onStoreUpdate(fresh);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'post_inspection' }, async () => {
       const fresh = await fetchFullStore();
-      onStoreUpdate(fresh);
+      if (isSubscribed) onStoreUpdate(fresh);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'damages' }, async () => {
       const fresh = await fetchFullStore();
-      onStoreUpdate(fresh);
+      if (isSubscribed) onStoreUpdate(fresh);
     })
     .subscribe();
 
   return () => {
+    isSubscribed = false;
+    clearInterval(intervalId);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('focus', handleFocus);
+    }
+    if (sseClose) sseClose();
     client.removeChannel(channel);
   };
 }

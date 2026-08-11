@@ -76,6 +76,18 @@ const DEFAULT_LABS = [
     image_url: "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&q=80&w=800",
     is_ready: true,
     created_at: new Date().toISOString()
+  },
+  {
+    id: "lab-6",
+    code: "NLAB-401",
+    name: "ห้องปฏิบัติการทักษะการพยาบาลขั้นสูง (Advanced Clinical Skill Lab)",
+    building: "อาคารเฉลิมพระเกียรติ (อาคาร 3)",
+    floor: "ชั้น 6",
+    capacity: 30,
+    description: "ห้องปฏิบัติการทักษะคลินิกขั้นสูง อุปกรณ์ใส่สายยาง ให้สารน้ำ และทำหัตถการพิเศษ",
+    image_url: "https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&q=80&w=800",
+    is_ready: true,
+    created_at: new Date().toISOString()
   }
 ];
 
@@ -103,8 +115,26 @@ function loadDb(): DbSchema {
     console.error("Error reading db.json:", e);
   }
 
+  let dbChanged = false;
+
   if (!db.laboratories || db.laboratories.length === 0) {
     db.laboratories = DEFAULT_LABS;
+    dbChanged = true;
+  } else if (db.laboratories.length < DEFAULT_LABS.length) {
+    for (const lab of DEFAULT_LABS) {
+      if (!db.laboratories.some((l) => l.id === lab.id)) {
+        db.laboratories.push(lab);
+        dbChanged = true;
+      }
+    }
+  }
+
+  if (!db.bookings) { db.bookings = []; dbChanged = true; }
+  if (!db.pre_inspection) { db.pre_inspection = []; dbChanged = true; }
+  if (!db.post_inspection) { db.post_inspection = []; dbChanged = true; }
+  if (!db.damages) { db.damages = []; dbChanged = true; }
+
+  if (dbChanged) {
     saveDb(db);
   }
 
