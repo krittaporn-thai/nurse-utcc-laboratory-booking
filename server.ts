@@ -16,19 +16,71 @@ interface DbSchema {
   [key: string]: any[];
 }
 
-function loadDb(): DbSchema {
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    if (fs.existsSync(DB_FILE)) {
-      const content = fs.readFileSync(DB_FILE, "utf-8");
-      return JSON.parse(content);
-    }
-  } catch (e) {
-    console.error("Error reading db.json:", e);
+const DEFAULT_LABS = [
+  {
+    id: "lab-1",
+    code: "NLAB-101",
+    name: "ห้องปฏิบัติการการพยาบาลพื้นฐาน 1 (Basic Nursing Skill Lab 1)",
+    building: "อาคารเฉลิมพระเกียรติ (อาคาร 3)",
+    floor: "ชั้น 4",
+    capacity: 30,
+    description: "ห้องปฏิบัติการสำหรับการฝึกทักษะการพยาบาลพื้นฐาน เตียงฝึกปฏิบัติ หุ่นฝึกฉีดยา และการดูแลผู้ป่วย",
+    image_url: "https://images.unsplash.com/photo-1581056771107-24ca5f033842?auto=format&fit=crop&q=80&w=800",
+    is_ready: true,
+    created_at: new Date().toISOString()
+  },
+  {
+    id: "lab-2",
+    code: "NLAB-102",
+    name: "ห้องปฏิบัติการการพยาบาลพื้นฐาน 2 (Basic Nursing Skill Lab 2)",
+    building: "อาคารเฉลิมพระเกียรติ (อาคาร 3)",
+    floor: "ชั้น 4",
+    capacity: 30,
+    description: "ห้องปฏิบัติการทักษะหัตถการพื้นฐาน เครื่องมือการพยาบาลขั้นพื้นฐานครบครัน",
+    image_url: "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&q=80&w=800",
+    is_ready: true,
+    created_at: new Date().toISOString()
+  },
+  {
+    id: "lab-3",
+    code: "NLAB-201",
+    name: "ห้องปฏิบัติการการประเมินภาวะสุขภาพ (Health Assessment Lab)",
+    building: "อาคารเฉลิมพระเกียรติ (อาคาร 3)",
+    floor: "ชั้น 5",
+    capacity: 25,
+    description: "อุปกรณ์ตรวจประเมินภาวะสุขภาพครบชุด หูฟังตรวจปอดและหัวใจ อุปกรณ์วัดสัญญาณชีพ",
+    image_url: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&q=80&w=800",
+    is_ready: true,
+    created_at: new Date().toISOString()
+  },
+  {
+    id: "lab-4",
+    code: "NLAB-301",
+    name: "ห้องปฏิบัติการการพยาบาลผู้ป่วยวิกฤต (Critical Care Simulation Lab)",
+    building: "อาคารเฉลิมพระเกียรติ (อาคาร 3)",
+    floor: "ชั้น 5",
+    capacity: 20,
+    description: "ห้องจำลองการพยาบาลผู้ป่วยวิกฤต พร้อมหุ่นจำลองเสมือนจริง และเครื่องติดตามสัญญาณชีพ",
+    image_url: "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&q=80&w=800",
+    is_ready: true,
+    created_at: new Date().toISOString()
+  },
+  {
+    id: "lab-5",
+    code: "NLAB-302",
+    name: "ห้องปฏิบัติการการพยาบาลมารดา ทารก และการคลอด (Maternal & Child Lab)",
+    building: "อาคารเฉลิมพระเกียรติ (อาคาร 3)",
+    floor: "ชั้น 6",
+    capacity: 25,
+    description: "ห้องปฏิบัติการทำคลอดจำลอง เตียงทำคลอด หุ่นจำลองทารกแรกเกิด และเครื่องฟังเสียงหัวใจทารกในครรภ์",
+    image_url: "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&q=80&w=800",
+    is_ready: true,
+    created_at: new Date().toISOString()
   }
-  const defaultDb: DbSchema = {
+];
+
+function loadDb(): DbSchema {
+  let db: DbSchema = {
     laboratories: [],
     bookings: [],
     pre_inspection: [],
@@ -38,8 +90,25 @@ function loadDb(): DbSchema {
       { setting_key: "admin_passcode", setting_value: "NURSEUTCC01" }
     ]
   };
-  saveDb(defaultDb);
-  return defaultDb;
+
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(DB_FILE)) {
+      const content = fs.readFileSync(DB_FILE, "utf-8");
+      db = JSON.parse(content);
+    }
+  } catch (e) {
+    console.error("Error reading db.json:", e);
+  }
+
+  if (!db.laboratories || db.laboratories.length === 0) {
+    db.laboratories = DEFAULT_LABS;
+    saveDb(db);
+  }
+
+  return db;
 }
 
 function saveDb(db: DbSchema) {

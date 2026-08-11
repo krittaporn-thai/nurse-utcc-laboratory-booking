@@ -28,11 +28,12 @@ export interface SupabaseConfig {
 }
 
 export function getSupabaseConfig(): SupabaseConfig {
+  const defaultUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   try {
     const saved = localStorage.getItem(STORAGE_KEY_SUPABASE);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed.url && parsed.anonKey) {
+      if (parsed.url && parsed.anonKey && parsed.isConnected) {
         return parsed;
       }
     }
@@ -51,8 +52,6 @@ export function getSupabaseConfig(): SupabaseConfig {
     };
   }
 
-  // Always fallback to current origin REST endpoint so client is NEVER null
-  const defaultUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   return {
     url: defaultUrl,
     anonKey: 'local-supabase-anon-key',
@@ -77,6 +76,11 @@ export function getSupabaseClient(): SupabaseClient {
     supabaseInstance = createClient(config.url, config.anonKey);
   }
   return supabaseInstance;
+}
+
+export function getLocalSupabaseClient(): SupabaseClient {
+  const defaultUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  return createClient(defaultUrl, 'local-supabase-anon-key');
 }
 
 export interface AppStoreData {
@@ -110,12 +114,30 @@ export async function getLabs(): Promise<Laboratory[]> {
 
   try {
     const { data, error } = await client.from('laboratories').select('*').order('code', { ascending: true });
-    if (error) {
+    if (error || !data) {
       console.error('LOAD LABS ERROR:', error);
+      const localClient = getLocalSupabaseClient();
+      const { data: localData } = await localClient.from('laboratories').select('*').order('code', { ascending: true });
+      if (localData) {
+        const labs: Laboratory[] = localData.map((item) => ({
+          id: String(item.id),
+          code: String(item.code || ''),
+          name: String(item.name || ''),
+          building: String(item.building || ''),
+          floor: String(item.floor || ''),
+          capacity: Number(item.capacity || 0),
+          description: String(item.description || ''),
+          image_url: String(item.image_url || ''),
+          is_ready: Boolean(item.is_ready ?? true),
+          created_at: String(item.created_at || new Date().toISOString())
+        }));
+        memoryStore.labs = labs;
+        return labs;
+      }
       return memoryStore.labs;
     }
     console.log('LOAD RESULT', data);
-    const labs: Laboratory[] = (data || []).map((item) => ({
+    const labs: Laboratory[] = data.map((item) => ({
       id: String(item.id),
       code: String(item.code || ''),
       name: String(item.name || ''),
@@ -131,6 +153,28 @@ export async function getLabs(): Promise<Laboratory[]> {
     return labs;
   } catch (err) {
     console.error('getLabs exception:', err);
+    try {
+      const localClient = getLocalSupabaseClient();
+      const { data: localData } = await localClient.from('laboratories').select('*').order('code', { ascending: true });
+      if (localData) {
+        const labs: Laboratory[] = localData.map((item) => ({
+          id: String(item.id),
+          code: String(item.code || ''),
+          name: String(item.name || ''),
+          building: String(item.building || ''),
+          floor: String(item.floor || ''),
+          capacity: Number(item.capacity || 0),
+          description: String(item.description || ''),
+          image_url: String(item.image_url || ''),
+          is_ready: Boolean(item.is_ready ?? true),
+          created_at: String(item.created_at || new Date().toISOString())
+        }));
+        memoryStore.labs = labs;
+        return labs;
+      }
+    } catch (e) {
+      // ignore
+    }
     return memoryStore.labs;
   }
 }
