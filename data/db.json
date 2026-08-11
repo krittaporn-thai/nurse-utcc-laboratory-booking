@@ -1,5 +1,18 @@
 {
-  "laboratories": [],
+  "laboratories": [
+    {
+      "id": "lab-999",
+      "code": "TR-999",
+      "name": "TEST_ROOM_999",
+      "building": "อาคารเรียนวิทยบริการ",
+      "floor": "ชั้น 9",
+      "capacity": 50,
+      "description": "ห้องปฏิบัติการทดสอบระบบ",
+      "image_url": "",
+      "is_ready": true,
+      "created_at": "2026-08-11T12:00:27.313Z"
+    }
+  ],
   "bookings": [],
   "pre_inspection": [],
   "post_inspection": [],
