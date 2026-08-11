@@ -1,0 +1,6 @@
+{
+  "name": "Nursing Laboratory Reservation System",
+  "description": "ระบบจองห้องปฏิบัติการพยาบาล คณะพยาบาลศาสตร์ พร้อมระบบอนุมัติ ตรวจรับอุปกรณ์ บันทึกความเสียหาย และรายงานสถิติ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

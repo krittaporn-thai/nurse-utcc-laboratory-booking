@@ -1,0 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Bai+Jamjuree:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Bai Jamjuree', 'Inter', sans-serif;
+  }
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Space Grotesk', 'Bai Jamjuree', sans-serif;
+  }
+}
+
+.bg-grid-pattern {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(15, 118, 110, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 118, 110, 0.05) 1px, transparent 1px);
+}
+
+.dark .bg-grid-pattern {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(20, 184, 166, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(20, 184, 166, 0.07) 1px, transparent 1px);
+}
+
+.geometric-card {
+  position: relative;
+  transition: all 0.2s ease-in-out;
+}
+
+.geometric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(to bottom, #0d9488, #0f766e);
+  border-top-left-radius: 0.75rem;
+  border-bottom-left-radius: 0.75rem;
+  opacity: 0.8;
+}
