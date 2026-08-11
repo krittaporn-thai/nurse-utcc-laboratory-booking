@@ -3,7 +3,8 @@ import {
   ShieldCheck,
   Search,
   UserCheck,
-  PlusCircle
+  PlusCircle,
+  RefreshCw
 } from 'lucide-react';
 import { StoryItem, Laboratory } from '../types';
 
@@ -17,6 +18,8 @@ interface Props {
   onSearchChange: (val: string) => void;
   onNewBookingClick: () => void;
   labs: Laboratory[];
+  onSyncNow?: () => void;
+  isSyncing?: boolean;
 }
 
 export const Header: React.FC<Props> = ({
@@ -28,7 +31,9 @@ export const Header: React.FC<Props> = ({
   searchTerm,
   onSearchChange,
   onNewBookingClick,
-  labs
+  labs,
+  onSyncNow,
+  isSyncing = false
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 transition-colors">
@@ -78,6 +83,19 @@ export const Header: React.FC<Props> = ({
           {/* Action Tools & Admin Badge */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             
+            {/* Sync Now Button */}
+            {onSyncNow && (
+              <button
+                onClick={onSyncNow}
+                disabled={isSyncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition border border-slate-200 dark:border-slate-700 active:scale-95 disabled:opacity-60"
+                title="รีเฟรช / ซิงค์ข้อมูลล่าสุด"
+              >
+                <RefreshCw size={14} className={isSyncing ? 'animate-spin text-teal-600 dark:text-teal-400' : ''} />
+                <span className="hidden sm:inline">{isSyncing ? 'กำลังซิงค์...' : 'Sync Now'}</span>
+              </button>
+            )}
+
             {/* Quick New Booking Button */}
             <button
               onClick={onNewBookingClick}

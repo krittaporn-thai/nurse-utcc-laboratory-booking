@@ -71,6 +71,26 @@ export default function App() {
   const [editingItemsBooking, setEditingItemsBooking] = useState<Booking | null>(null);
   const [preSelectedLabId, setPreSelectedLabId] = useState<string | undefined>(undefined);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Manual Sync Now handler
+  const handleSyncNow = async () => {
+    setIsSyncing(true);
+    try {
+      const fresh = await fetchFullStore(store.isAdminAuthenticated);
+      if (fresh) {
+        setStore((prev) => ({
+          ...fresh,
+          bookings: updateDynamicStatuses(fresh.bookings, fresh.postInspections),
+          isAdminAuthenticated: prev.isAdminAuthenticated
+        }));
+      }
+    } catch (err) {
+      console.error('Error during manual sync:', err);
+    } finally {
+      setTimeout(() => setIsSyncing(false), 400);
+    }
+  };
 
   // 1. Initial Fetch on Mount
   useEffect(() => {
@@ -251,6 +271,8 @@ export default function App() {
           setActiveTab('booking');
         }}
         labs={store.labs}
+        onSyncNow={handleSyncNow}
+        isSyncing={isSyncing}
       />
 
       {/* Main Container Layout */}
