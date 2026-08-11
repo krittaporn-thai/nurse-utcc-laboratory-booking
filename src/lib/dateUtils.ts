@@ -1,3 +1,5 @@
+import { BookingStatus } from '../types';
+
 /**
  * Helper function to calculate business days (Monday to Friday) between two dates.
  * Excludes Saturdays (6) and Sundays (0).
@@ -151,34 +153,41 @@ export function calculateBookingStatus(
   endTime: string,
   currentStatus: string,
   now: Date = new Date()
-): 'pending' | 'in_use' | 'completed' | 'rejected' | 'cancelled' {
+): BookingStatus {
   if (currentStatus === 'rejected' || currentStatus === 'cancelled') {
-    return currentStatus;
+    return currentStatus as BookingStatus;
   }
 
   const startDateTime = parseBookingDateTime(bookingDate, startTime || '00:00');
   const endDateTime = parseBookingDateTime(bookingDate, endTime || '23:59');
 
   if (!startDateTime || !endDateTime) {
-    return (currentStatus as 'pending' | 'in_use' | 'completed') || 'pending';
+    return (currentStatus as BookingStatus) || 'pending';
   }
 
   const currentMs = now.getTime();
   const startMs = startDateTime.getTime();
   const endMs = endDateTime.getTime();
 
-  // Rule 1: current_datetime < booking_start_datetime -> รอดำเนินการ (สีเหลือง)
+  // Rule 1: current_datetime < booking_start_datetime
   if (currentMs < startMs) {
+    return currentStatus === 'approved' ? 'approved' : 'pending';
+  }
+
+  // Rule 2: booking_start_datetime <= current_datetime < booking_end_datetime
+  if (currentMs >= startMs && currentMs < endMs) {
+    if (currentStatus === 'approved' || currentStatus === 'in_use') {
+      return 'in_use';
+    }
     return 'pending';
   }
 
-  // Rule 2: booking_start_datetime <= current_datetime < booking_end_datetime -> กำลังใช้งาน (สีเขียว)
-  if (currentMs >= startMs && currentMs < endMs) {
-    return 'in_use';
+  // Rule 3: current_datetime >= booking_end_datetime
+  if (currentStatus === 'approved' || currentStatus === 'in_use' || currentStatus === 'completed') {
+    return 'completed';
   }
 
-  // Rule 3: current_datetime >= booking_end_datetime -> เสร็จสิ้น (สีแดง)
-  return 'completed';
+  return (currentStatus as BookingStatus) || 'pending';
 }
 
 
