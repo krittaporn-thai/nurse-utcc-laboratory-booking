@@ -98,9 +98,10 @@ export async function getLabs(): Promise<Laboratory[]> {
   try {
     const { data, error } = await client.from('laboratories').select('*').order('code', { ascending: true });
     if (error) {
-      console.error('Error fetching laboratories:', error);
+      console.error('LOAD LABS ERROR:', error);
       return memoryStore.labs;
     }
+    console.log('LOAD RESULT', data);
     if (!data || data.length === 0) {
       // Seed initial labs to Supabase central database if table is empty
       await seedInitialLabs(client);
@@ -138,7 +139,9 @@ async function seedInitialLabs(client: SupabaseClient) {
       image_url: l.image_url,
       is_ready: l.is_ready
     }));
-    await client.from('laboratories').upsert(payload);
+    const { data, error } = await client.from('laboratories').upsert(payload).select();
+    if (error) console.error('SEED LABS ERROR:', error);
+    else console.log('INSERT RESULT (SEED LABS)', data);
   } catch (e) {
     console.error('Failed to seed initial labs:', e);
   }
@@ -149,7 +152,7 @@ export async function createLab(lab: Laboratory): Promise<Laboratory> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('laboratories').insert({
+      const { data, error } = await client.from('laboratories').insert({
         id: lab.id,
         code: lab.code,
         name: lab.name,
@@ -159,7 +162,12 @@ export async function createLab(lab: Laboratory): Promise<Laboratory> {
         description: lab.description,
         image_url: lab.image_url,
         is_ready: lab.is_ready
-      });
+      }).select();
+      if (error) {
+        console.error('INSERT LAB ERROR:', error);
+      } else {
+        console.log('INSERT RESULT', data);
+      }
     } catch (e) {
       console.error('createLab error:', e);
     }
@@ -172,7 +180,7 @@ export async function updateLab(lab: Laboratory): Promise<Laboratory> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('laboratories').update({
+      const { data, error } = await client.from('laboratories').update({
         code: lab.code,
         name: lab.name,
         building: lab.building,
@@ -181,7 +189,12 @@ export async function updateLab(lab: Laboratory): Promise<Laboratory> {
         description: lab.description,
         image_url: lab.image_url,
         is_ready: lab.is_ready
-      }).eq('id', lab.id);
+      }).eq('id', lab.id).select();
+      if (error) {
+        console.error('UPDATE LAB ERROR:', error);
+      } else {
+        console.log('UPDATE RESULT', data);
+      }
     } catch (e) {
       console.error('updateLab error:', e);
     }
@@ -194,7 +207,12 @@ export async function deleteLab(labId: string): Promise<void> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('laboratories').delete().eq('id', labId);
+      const { data, error } = await client.from('laboratories').delete().eq('id', labId).select();
+      if (error) {
+        console.error('DELETE LAB ERROR:', error);
+      } else {
+        console.log('DELETE RESULT', data);
+      }
     } catch (e) {
       console.error('deleteLab error:', e);
     }
@@ -212,6 +230,7 @@ export async function getBookings(): Promise<Booking[]> {
       console.error('Error fetching bookings:', error);
       return memoryStore.bookings;
     }
+    console.log('LOAD RESULT', data);
     if (!data || data.length === 0) {
       await seedInitialBookings(client);
       return updateDynamicStatuses(INITIAL_BOOKINGS, memoryStore.postInspections);
@@ -279,7 +298,9 @@ async function seedInitialBookings(client: SupabaseClient) {
       terms_accepted: b.terms_accepted,
       rejection_reason: b.rejection_reason
     }));
-    await client.from('bookings').upsert(payload);
+    const { data, error } = await client.from('bookings').upsert(payload).select();
+    if (error) console.error('SEED BOOKINGS ERROR:', error);
+    else console.log('INSERT RESULT (SEED BOOKINGS)', data);
   } catch (e) {
     console.error('Failed to seed initial bookings:', e);
   }
@@ -290,7 +311,7 @@ export async function createBooking(booking: Booking): Promise<Booking> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('bookings').insert({
+      const { data, error } = await client.from('bookings').insert({
         id: booking.id,
         booking_code: booking.booking_code,
         requester_name: booking.requester_name,
@@ -314,7 +335,12 @@ export async function createBooking(booking: Booking): Promise<Booking> {
         assets: booking.assets,
         terms_accepted: booking.terms_accepted,
         rejection_reason: booking.rejection_reason
-      });
+      }).select();
+      if (error) {
+        console.error('INSERT BOOKING ERROR:', error);
+      } else {
+        console.log('INSERT RESULT', data);
+      }
     } catch (e) {
       console.error('createBooking error:', e);
     }
@@ -327,7 +353,7 @@ export async function updateBooking(booking: Booking): Promise<Booking> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('bookings').update({
+      const { data, error } = await client.from('bookings').update({
         booking_code: booking.booking_code,
         requester_name: booking.requester_name,
         department: booking.department,
@@ -352,7 +378,12 @@ export async function updateBooking(booking: Booking): Promise<Booking> {
         rejection_reason: booking.rejection_reason,
         pre_inspection_done: booking.pre_inspection_done,
         post_inspection_done: booking.post_inspection_done
-      }).eq('id', booking.id);
+      }).eq('id', booking.id).select();
+      if (error) {
+        console.error('UPDATE BOOKING ERROR:', error);
+      } else {
+        console.log('UPDATE RESULT', data);
+      }
     } catch (e) {
       console.error('updateBooking error:', e);
     }
@@ -365,7 +396,12 @@ export async function deleteBooking(bookingId: string): Promise<void> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('bookings').delete().eq('id', bookingId);
+      const { data, error } = await client.from('bookings').delete().eq('id', bookingId).select();
+      if (error) {
+        console.error('DELETE BOOKING ERROR:', error);
+      } else {
+        console.log('DELETE RESULT', data);
+      }
     } catch (e) {
       console.error('deleteBooking error:', e);
     }
@@ -407,7 +443,7 @@ export async function createPreInspection(inspection: PreInspection): Promise<Pr
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('pre_inspection').insert({
+      const { data, error } = await client.from('pre_inspection').insert({
         id: inspection.id,
         booking_id: inspection.booking_id,
         inspection_date: inspection.inspection_date,
@@ -418,7 +454,12 @@ export async function createPreInspection(inspection: PreInspection): Promise<Pr
         equipment_checked: inspection.equipment_checked,
         assets_checked: inspection.assets_checked,
         status: inspection.status
-      });
+      }).select();
+      if (error) {
+        console.error('INSERT PRE_INSPECTION ERROR:', error);
+      } else {
+        console.log('INSERT RESULT', data);
+      }
       await client.from('bookings').update({ pre_inspection_done: true }).eq('id', inspection.booking_id);
     } catch (e) {
       console.error('createPreInspection error:', e);
@@ -435,6 +476,7 @@ export async function getPostInspections(): Promise<PostInspection[]> {
   try {
     const { data, error } = await client.from('post_inspection').select('*').order('created_at', { ascending: false });
     if (error || !data) return memoryStore.postInspections;
+    console.log('LOAD RESULT', data);
     memoryStore.postInspections = data.map((item) => ({
       id: item.id,
       booking_id: item.booking_id,
@@ -461,7 +503,7 @@ export async function createPostInspection(inspection: PostInspection): Promise<
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('post_inspection').insert({
+      const { data, error } = await client.from('post_inspection').insert({
         id: inspection.id,
         booking_id: inspection.booking_id,
         inspection_date: inspection.inspection_date,
@@ -471,7 +513,12 @@ export async function createPostInspection(inspection: PostInspection): Promise<
         assets_status: inspection.assets_status,
         notes: inspection.notes,
         images: inspection.images
-      });
+      }).select();
+      if (error) {
+        console.error('INSERT POST_INSPECTION ERROR:', error);
+      } else {
+        console.log('INSERT RESULT', data);
+      }
       await client.from('bookings').update({ status: 'completed', post_inspection_done: true }).eq('id', inspection.booking_id);
     } catch (e) {
       console.error('createPostInspection error:', e);
@@ -488,6 +535,7 @@ export async function getDamages(): Promise<DamageLog[]> {
   try {
     const { data, error } = await client.from('damages').select('*').order('created_at', { ascending: false });
     if (error || !data) return memoryStore.damages;
+    console.log('LOAD RESULT', data);
     memoryStore.damages = data.map((item) => ({
       id: item.id,
       booking_id: item.booking_id,
@@ -511,7 +559,7 @@ export async function createDamage(damage: DamageLog): Promise<DamageLog> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('damages').insert({
+      const { data, error } = await client.from('damages').insert({
         id: damage.id,
         booking_id: damage.booking_id,
         item_name: damage.item_name,
@@ -521,7 +569,12 @@ export async function createDamage(damage: DamageLog): Promise<DamageLog> {
         total_amount: damage.total_amount,
         responsible_person: damage.responsible_person,
         notes: damage.notes
-      });
+      }).select();
+      if (error) {
+        console.error('INSERT DAMAGE ERROR:', error);
+      } else {
+        console.log('INSERT RESULT', data);
+      }
     } catch (e) {
       console.error('createDamage error:', e);
     }
@@ -534,7 +587,12 @@ export async function deleteDamage(damageId: string): Promise<void> {
   const client = getSupabaseClient();
   if (client) {
     try {
-      await client.from('damages').delete().eq('id', damageId);
+      const { data, error } = await client.from('damages').delete().eq('id', damageId).select();
+      if (error) {
+        console.error('DELETE DAMAGE ERROR:', error);
+      } else {
+        console.log('DELETE RESULT', data);
+      }
     } catch (e) {
       console.error('deleteDamage error:', e);
     }
