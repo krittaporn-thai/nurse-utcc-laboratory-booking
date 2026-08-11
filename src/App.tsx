@@ -76,32 +76,10 @@ export default function App() {
       }
     };
 
-    const handleCustomEvent = (e: Event) => {
-      const customEvent = e as CustomEvent;
-      if (customEvent.detail) {
-        setStore(customEvent.detail);
-      }
-    };
-
-    let bc: BroadcastChannel | null = null;
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      bc = new BroadcastChannel('nurse_lab_store_channel');
-      bc.onmessage = (event) => {
-        if (event.data?.type === 'STORE_UPDATE' && event.data?.data) {
-          setStore(event.data.data);
-        }
-      };
-    }
-
     window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('nurse_lab_store_update', handleCustomEvent);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('nurse_lab_store_update', handleCustomEvent);
-      if (bc) {
-        bc.close();
-      }
     };
   }, []);
 
