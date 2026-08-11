@@ -93,16 +93,60 @@ export interface AppStoreData {
   isAdminAuthenticated: boolean;
 }
 
+const LOCAL_STORAGE_STORE_KEY = 'nurse_lab_memory_store_v1';
+
+function loadMemoryStoreFromStorage(): AppStoreData {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_STORE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.labs) && parsed.labs.length > 0) {
+          return {
+            labs: parsed.labs,
+            inventory: parsed.inventory || INITIAL_INVENTORY,
+            bookings: parsed.bookings || INITIAL_BOOKINGS,
+            preInspections: parsed.preInspections || INITIAL_PRE_INSPECTIONS,
+            postInspections: parsed.postInspections || INITIAL_POST_INSPECTIONS,
+            damages: parsed.damages || INITIAL_DAMAGES,
+            isAdminAuthenticated: false
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load memory store from localStorage', e);
+    }
+  }
+  return {
+    labs: INITIAL_LABS,
+    inventory: INITIAL_INVENTORY,
+    bookings: INITIAL_BOOKINGS,
+    preInspections: INITIAL_PRE_INSPECTIONS,
+    postInspections: INITIAL_POST_INSPECTIONS,
+    damages: INITIAL_DAMAGES,
+    isAdminAuthenticated: false
+  };
+}
+
 // Memory fallback cache in runtime
-let memoryStore: AppStoreData = {
-  labs: INITIAL_LABS,
-  inventory: INITIAL_INVENTORY,
-  bookings: INITIAL_BOOKINGS,
-  preInspections: INITIAL_PRE_INSPECTIONS,
-  postInspections: INITIAL_POST_INSPECTIONS,
-  damages: INITIAL_DAMAGES,
-  isAdminAuthenticated: false
-};
+let memoryStore: AppStoreData = loadMemoryStoreFromStorage();
+
+function saveMemoryStoreToStorage() {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_STORE_KEY, JSON.stringify({
+        labs: memoryStore.labs,
+        inventory: memoryStore.inventory,
+        bookings: memoryStore.bookings,
+        preInspections: memoryStore.preInspections,
+        postInspections: memoryStore.postInspections,
+        damages: memoryStore.damages
+      }));
+    } catch (e) {
+      console.error('Failed to save memory store to localStorage', e);
+    }
+  }
+}
 
 // =========================================
 // SUPABASE SERVICE LAYER (SINGLE SOURCE OF TRUTH)
@@ -150,29 +194,25 @@ export async function getLabs(): Promise<Laboratory[]> {
   try {
     const { data, error } = await client.from('laboratories').select('*').order('code', { ascending: true });
     if (error || !data || data.length === 0) {
-      console.log('Laboratories table empty or fetch error. Seeding default labs...');
-      await seedInitialLabs(client);
-      const { data: refetched } = await client.from('laboratories').select('*').order('code', { ascending: true });
-      if (refetched && refetched.length > 0) {
-        const labs = refetched.map(mapLabRecord);
-        memoryStore.labs = labs;
-        return labs;
+      if (!data || data.length === 0) {
+        seedInitialLabs(client).catch(() => {});
       }
-      memoryStore.labs = INITIAL_LABS;
-      return INITIAL_LABS;
+      return memoryStore.labs;
     }
 
     const labs = data.map(mapLabRecord);
     memoryStore.labs = labs;
+    saveMemoryStoreToStorage();
     return labs;
   } catch (err) {
     console.error('getLabs exception:', err);
-    memoryStore.labs = INITIAL_LABS;
-    return INITIAL_LABS;
+    return memoryStore.labs;
   }
 }
 
 export async function createLab(lab: Laboratory): Promise<Laboratory> {
+  memoryStore.labs = [lab, ...memoryStore.labs.filter((l) => l.id !== lab.id)];
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -187,11 +227,11 @@ export async function createLab(lab: Laboratory): Promise<Laboratory> {
       is_ready: lab.is_ready,
       created_at: lab.created_at || new Date().toISOString()
     };
-    const { data, error } = await client.from('laboratories').insert(payload).select();
+    const { data, error } = await client.from('laboratories').upsert(payload).select();
     if (error) {
-      console.error('INSERT LAB ERROR:', error);
+      console.error('INSERT/UPSERT LAB ERROR:', error);
     } else {
-      console.log('INSERT RESULT', data);
+      console.log('INSERT/UPSERT LAB RESULT', data);
     }
   } catch (e) {
     console.error('createLab error:', e);
@@ -200,6 +240,8 @@ export async function createLab(lab: Laboratory): Promise<Laboratory> {
 }
 
 export async function updateLab(lab: Laboratory): Promise<Laboratory> {
+  memoryStore.labs = memoryStore.labs.map((l) => (l.id === lab.id ? lab : l));
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -213,8 +255,9 @@ export async function updateLab(lab: Laboratory): Promise<Laboratory> {
       is_ready: lab.is_ready
     };
     const { data, error } = await client.from('laboratories').update(payload).eq('id', lab.id).select();
-    if (error) {
-      console.error('UPDATE LAB ERROR:', error);
+    if (error || !data || data.length === 0) {
+      console.warn('UPDATE LAB eq failed or 0 rows affected, attempting upsert fallback...', error);
+      await client.from('laboratories').upsert({ id: lab.id, ...payload });
     } else {
       console.log('UPDATE RESULT', data);
     }
@@ -225,6 +268,8 @@ export async function updateLab(lab: Laboratory): Promise<Laboratory> {
 }
 
 export async function deleteLab(labId: string): Promise<void> {
+  memoryStore.labs = memoryStore.labs.filter((l) => l.id !== labId);
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const { data, error } = await client.from('laboratories').delete().eq('id', labId).select();
@@ -244,8 +289,7 @@ export async function getBookings(): Promise<Booking[]> {
 
   try {
     const { data, error } = await client.from('bookings').select('*').order('created_at', { ascending: false });
-    if (error) {
-      console.error('LOAD BOOKINGS ERROR:', error);
+    if (error || !data || data.length === 0) {
       return memoryStore.bookings;
     }
     console.log('LOAD RESULT', data);
@@ -278,6 +322,7 @@ export async function getBookings(): Promise<Booking[]> {
       created_at: String(item.created_at || new Date().toISOString())
     }));
     memoryStore.bookings = updateDynamicStatuses(formatted, memoryStore.postInspections);
+    saveMemoryStoreToStorage();
     return memoryStore.bookings;
   } catch (err) {
     console.error('getBookings exception:', err);
@@ -286,6 +331,8 @@ export async function getBookings(): Promise<Booking[]> {
 }
 
 export async function createBooking(booking: Booking): Promise<Booking> {
+  memoryStore.bookings = [booking, ...memoryStore.bookings.filter((b) => b.id !== booking.id)];
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -314,7 +361,7 @@ export async function createBooking(booking: Booking): Promise<Booking> {
       rejection_reason: booking.rejection_reason,
       created_at: booking.created_at || new Date().toISOString()
     };
-    const { data, error } = await client.from('bookings').insert(payload).select();
+    const { data, error } = await client.from('bookings').upsert(payload).select();
     if (error) {
       console.error('INSERT BOOKING ERROR:', error);
     } else {
@@ -327,6 +374,8 @@ export async function createBooking(booking: Booking): Promise<Booking> {
 }
 
 export async function updateBooking(booking: Booking): Promise<Booking> {
+  memoryStore.bookings = memoryStore.bookings.map((b) => (b.id === booking.id ? booking : b));
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   try {
     const payload = {
@@ -356,8 +405,9 @@ export async function updateBooking(booking: Booking): Promise<Booking> {
       post_inspection_done: booking.post_inspection_done
     };
     const { data, error } = await client.from('bookings').update(payload).eq('id', booking.id).select();
-    if (error) {
-      console.error('UPDATE BOOKING ERROR:', error);
+    if (error || !data || data.length === 0) {
+      console.warn('UPDATE BOOKING eq failed or 0 rows affected, attempting upsert fallback...', error);
+      await client.from('bookings').upsert({ id: booking.id, ...payload });
     } else {
       console.log('UPDATE RESULT', data);
     }
@@ -369,6 +419,7 @@ export async function updateBooking(booking: Booking): Promise<Booking> {
 
 export async function deleteBooking(bookingId: string): Promise<void> {
   memoryStore.bookings = memoryStore.bookings.filter((b) => b.id !== bookingId);
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -405,6 +456,7 @@ export async function getPreInspections(): Promise<PreInspection[]> {
       status: item.status || 'pass',
       created_at: item.created_at || new Date().toISOString()
     }));
+    saveMemoryStoreToStorage();
     return memoryStore.preInspections;
   } catch (err) {
     return memoryStore.preInspections;
@@ -416,6 +468,7 @@ export async function createPreInspection(inspection: PreInspection): Promise<Pr
   memoryStore.bookings = memoryStore.bookings.map((b) =>
     b.id === inspection.booking_id ? { ...b, pre_inspection_done: true } : b
   );
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -446,6 +499,7 @@ export async function createPreInspection(inspection: PreInspection): Promise<Pr
 
 export async function updatePreInspection(inspection: PreInspection): Promise<PreInspection> {
   memoryStore.preInspections = memoryStore.preInspections.map((p) => (p.id === inspection.id ? inspection : p));
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -469,6 +523,7 @@ export async function updatePreInspection(inspection: PreInspection): Promise<Pr
 
 export async function deletePreInspection(inspectionId: string): Promise<void> {
   memoryStore.preInspections = memoryStore.preInspections.filter((p) => p.id !== inspectionId);
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -500,6 +555,7 @@ export async function getPostInspections(): Promise<PostInspection[]> {
       images: item.images || [],
       created_at: item.created_at || new Date().toISOString()
     }));
+    saveMemoryStoreToStorage();
     return memoryStore.postInspections;
   } catch (err) {
     return memoryStore.postInspections;
@@ -511,6 +567,7 @@ export async function createPostInspection(inspection: PostInspection): Promise<
   memoryStore.bookings = memoryStore.bookings.map((b) =>
     b.id === inspection.booking_id ? { ...b, status: 'completed' as const, post_inspection_done: true } : b
   );
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -540,6 +597,7 @@ export async function createPostInspection(inspection: PostInspection): Promise<
 
 export async function updatePostInspection(inspection: PostInspection): Promise<PostInspection> {
   memoryStore.postInspections = memoryStore.postInspections.map((p) => (p.id === inspection.id ? inspection : p));
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -562,6 +620,7 @@ export async function updatePostInspection(inspection: PostInspection): Promise<
 
 export async function deletePostInspection(inspectionId: string): Promise<void> {
   memoryStore.postInspections = memoryStore.postInspections.filter((p) => p.id !== inspectionId);
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -593,6 +652,7 @@ export async function getDamages(): Promise<DamageLog[]> {
       notes: item.notes || '',
       created_at: item.created_at || new Date().toISOString()
     }));
+    saveMemoryStoreToStorage();
     return memoryStore.damages;
   } catch (err) {
     return memoryStore.damages;
@@ -601,6 +661,7 @@ export async function getDamages(): Promise<DamageLog[]> {
 
 export async function createDamage(damage: DamageLog): Promise<DamageLog> {
   memoryStore.damages = [damage, ...memoryStore.damages];
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -629,6 +690,7 @@ export async function createDamage(damage: DamageLog): Promise<DamageLog> {
 
 export async function updateDamage(damage: DamageLog): Promise<DamageLog> {
   memoryStore.damages = memoryStore.damages.map((d) => (d.id === damage.id ? damage : d));
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
@@ -651,6 +713,7 @@ export async function updateDamage(damage: DamageLog): Promise<DamageLog> {
 
 export async function deleteDamage(damageId: string): Promise<void> {
   memoryStore.damages = memoryStore.damages.filter((d) => d.id !== damageId);
+  saveMemoryStoreToStorage();
   const client = getSupabaseClient();
   if (client) {
     try {
