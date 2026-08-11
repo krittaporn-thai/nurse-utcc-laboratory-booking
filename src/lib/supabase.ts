@@ -110,10 +110,26 @@ export function loadLocalStore(): AppStoreData {
   };
 }
 
+const storeBroadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window
+  ? new BroadcastChannel('nurse_lab_store_channel')
+  : null;
+
 export function saveLocalStore(data: Partial<AppStoreData>) {
   const current = loadLocalStore();
   const updated = { ...current, ...data };
   localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(updated));
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('nurse_lab_store_update', { detail: updated }));
+    if (storeBroadcastChannel) {
+      try {
+        storeBroadcastChannel.postMessage({ type: 'STORE_UPDATE', data: updated });
+      } catch (e) {
+        console.warn('BroadcastChannel error:', e);
+      }
+    }
+  }
+
   return updated;
 }
 

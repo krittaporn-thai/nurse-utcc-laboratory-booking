@@ -63,6 +63,48 @@ export default function App() {
     saveLocalStore(store);
   }, [store]);
 
+  // Real-time synchronization across browser tabs and windows
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'nurse_lab_store_v3' && e.newValue) {
+        try {
+          const newData = JSON.parse(e.newValue);
+          setStore(newData);
+        } catch (err) {
+          console.error('Failed to sync storage event:', err);
+        }
+      }
+    };
+
+    const handleCustomEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail) {
+        setStore(customEvent.detail);
+      }
+    };
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      bc = new BroadcastChannel('nurse_lab_store_channel');
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'STORE_UPDATE' && event.data?.data) {
+          setStore(event.data.data);
+        }
+      };
+    }
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('nurse_lab_store_update', handleCustomEvent);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('nurse_lab_store_update', handleCustomEvent);
+      if (bc) {
+        bc.close();
+      }
+    };
+  }, []);
+
   // Admin login success handler
   const handleAdminSuccess = () => {
     setStore((prev) => ({ ...prev, isAdminAuthenticated: true }));
