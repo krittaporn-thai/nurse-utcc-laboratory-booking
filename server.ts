@@ -91,9 +91,48 @@ const DEFAULT_LABS = [
   }
 ];
 
+const DEFAULT_INVENTORY = [
+  {
+    id: "inv-1",
+    name: "หุ่นฝึกฉีดยาเข้ากล้ามเนื้อ (Intramuscular Model)",
+    category: "medical_equipment",
+    stock_qty: 10,
+    unit: "ชุด"
+  },
+  {
+    id: "inv-2",
+    name: "เครื่องตรวจวัดสัญญาณชีพ (Patient Monitor)",
+    category: "medical_equipment",
+    stock_qty: 5,
+    unit: "เครื่อง"
+  },
+  {
+    id: "inv-3",
+    name: "ชุดอุปกรณ์ทำแผลปราศจากเชื้อ (Dressing Set)",
+    category: "consumable",
+    stock_qty: 50,
+    unit: "ชุด"
+  },
+  {
+    id: "inv-4",
+    name: "เข็มฉีดยาพร้อมไซริ้งค์ 5 ml",
+    category: "consumable",
+    stock_qty: 200,
+    unit: "อัน"
+  },
+  {
+    id: "inv-5",
+    name: "เตียงผู้ป่วยไฟฟ้า 3 ไกร์",
+    category: "asset",
+    stock_qty: 12,
+    unit: "เตียง"
+  }
+];
+
 function loadDb(): DbSchema {
   let db: DbSchema = {
     laboratories: [],
+    inventory: [],
     bookings: [],
     pre_inspection: [],
     post_inspection: [],
@@ -127,6 +166,11 @@ function loadDb(): DbSchema {
         dbChanged = true;
       }
     }
+  }
+
+  if (!db.inventory || db.inventory.length === 0) {
+    db.inventory = DEFAULT_INVENTORY;
+    dbChanged = true;
   }
 
   if (!db.bookings) { db.bookings = []; dbChanged = true; }

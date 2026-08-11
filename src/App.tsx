@@ -102,7 +102,7 @@ export default function App() {
           ...prev,
           labs: data.labs,
           inventory: data.inventory,
-          bookings: updateDynamicStatuses(data.bookings),
+          bookings: updateDynamicStatuses(data.bookings, data.postInspections),
           preInspections: data.preInspections,
           postInspections: data.postInspections,
           damages: data.damages

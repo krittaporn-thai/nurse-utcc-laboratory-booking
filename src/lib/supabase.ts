@@ -147,6 +147,94 @@ async function seedInitialLabs(client: SupabaseClient) {
   }
 }
 
+// --- Inventory ---
+export async function getInventory(): Promise<InventoryItem[]> {
+  const client = getSupabaseClient();
+  try {
+    const { data, error } = await client.from('inventory').select('*');
+    if (!error && Array.isArray(data)) {
+      if (data.length === 0) {
+        const payload = INITIAL_INVENTORY.map((i) => ({
+          id: i.id,
+          name: i.name,
+          category: i.category,
+          stock_qty: i.stock_qty,
+          unit: i.unit
+        }));
+        await client.from('inventory').upsert(payload);
+        const { data: refetched } = await client.from('inventory').select('*');
+        if (refetched && refetched.length > 0) {
+          memoryStore.inventory = refetched.map((item) => ({
+            id: String(item.id),
+            name: String(item.name || ''),
+            category: item.category || 'consumable',
+            stock_qty: Number(item.stock_qty || 0),
+            unit: String(item.unit || 'ชิ้น')
+          }));
+          return memoryStore.inventory;
+        }
+      } else {
+        memoryStore.inventory = data.map((item) => ({
+          id: String(item.id),
+          name: String(item.name || ''),
+          category: item.category || 'consumable',
+          stock_qty: Number(item.stock_qty || 0),
+          unit: String(item.unit || 'ชิ้น')
+        }));
+        return memoryStore.inventory;
+      }
+    }
+  } catch (err) {
+    console.error('getInventory exception:', err);
+  }
+  return memoryStore.inventory;
+}
+
+export async function createInventoryItem(item: InventoryItem): Promise<InventoryItem> {
+  memoryStore.inventory = [item, ...memoryStore.inventory.filter((i) => i.id !== item.id)];
+  const client = getSupabaseClient();
+  try {
+    const payload = {
+      id: item.id,
+      name: item.name,
+      category: item.category,
+      stock_qty: item.stock_qty,
+      unit: item.unit
+    };
+    await client.from('inventory').upsert(payload);
+  } catch (e) {
+    console.error('createInventoryItem error:', e);
+  }
+  return item;
+}
+
+export async function updateInventoryItem(item: InventoryItem): Promise<InventoryItem> {
+  memoryStore.inventory = memoryStore.inventory.map((i) => (i.id === item.id ? item : i));
+  const client = getSupabaseClient();
+  try {
+    const payload = {
+      name: item.name,
+      category: item.category,
+      stock_qty: item.stock_qty,
+      unit: item.unit
+    };
+    await client.from('inventory').update(payload).eq('id', item.id);
+  } catch (e) {
+    console.error('updateInventoryItem error:', e);
+  }
+  return item;
+}
+
+export async function deleteInventoryItem(itemId: string): Promise<void> {
+  memoryStore.inventory = memoryStore.inventory.filter((i) => i.id !== itemId);
+  const client = getSupabaseClient();
+  try {
+    await client.from('inventory').delete().eq('id', itemId);
+  } catch (e) {
+    console.error('deleteInventoryItem error:', e);
+  }
+}
+
 // --- Laboratories ---
 export async function getLabs(): Promise<Laboratory[]> {
   const client = getSupabaseClient();
@@ -689,8 +777,9 @@ export async function verifyAdminPasscodeInDb(inputPasscode: string): Promise<bo
 
 // --- Full Store Fetcher ---
 export async function fetchFullStore(isAdminAuth: boolean = false): Promise<AppStoreData> {
-  const [labs, postInspections, preInspections, bookings, damages] = await Promise.all([
+  const [labs, inventory, postInspections, preInspections, bookings, damages] = await Promise.all([
     getLabs(),
+    getInventory(),
     getPostInspections(),
     getPreInspections(),
     getBookings(),
@@ -701,7 +790,7 @@ export async function fetchFullStore(isAdminAuth: boolean = false): Promise<AppS
 
   return {
     labs,
-    inventory: INITIAL_INVENTORY,
+    inventory,
     bookings: updatedBookings,
     preInspections,
     postInspections,
@@ -761,6 +850,10 @@ export function subscribeToStoreChanges(onStoreUpdate: (data: AppStoreData) => v
   const channel = client
     .channel('public-central-db')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'laboratories' }, async () => {
+      const fresh = await fetchFullStore();
+      if (isSubscribed) onStoreUpdate(fresh);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory' }, async () => {
       const fresh = await fetchFullStore();
       if (isSubscribed) onStoreUpdate(fresh);
     })
