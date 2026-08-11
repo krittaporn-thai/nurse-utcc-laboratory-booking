@@ -34,7 +34,11 @@ export function getSupabaseConfig(): SupabaseConfig {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed.url && parsed.anonKey && parsed.isConnected) {
-        return parsed;
+        let url = parsed.url;
+        if (typeof window !== 'undefined' && (url.includes('localhost') || url.includes('127.0.0.1'))) {
+          url = window.location.origin;
+        }
+        return { ...parsed, url };
       }
     }
   } catch (e) {

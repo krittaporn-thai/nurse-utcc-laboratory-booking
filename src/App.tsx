@@ -138,7 +138,7 @@ export default function App() {
   const handleRejectBooking = async (bookingId: string, reason: string) => {
     const target = store.bookings.find((b) => b.id === bookingId);
     if (!target) return;
-    const updated: Booking = { ...target, status: 'rejected', reject_reason: reason };
+    const updated: Booking = { ...target, status: 'rejected', rejection_reason: reason };
     await updateBooking(updated);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));

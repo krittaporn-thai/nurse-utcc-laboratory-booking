@@ -198,6 +198,18 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
 
+  // CORS Middleware for cross-browser / cross-domain synchronization
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, apikey, prefer, x-client-info, range");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   // API Endpoints for simulation and system info
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", app: "Nursing Laboratory Reservation System", timestamp: new Date().toISOString() });
@@ -227,8 +239,10 @@ async function startServer() {
   // Realtime Event Endpoint
   app.get("/rest/v1/realtime", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("Access-Control-Allow-Origin", "*");
     res.flushHeaders();
 
     res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
