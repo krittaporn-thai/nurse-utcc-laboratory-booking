@@ -95,21 +95,19 @@ export default function App() {
     };
   }, []);
 
-  // 2. Realtime SSE Subscription
+  // 2. Realtime SSE Subscription & Cross-Browser Synchronization
   useEffect(() => {
-    const unsubscribe = subscribeToStoreChanges(() => {
-      fetchFullStore(store.isAdminAuthenticated).then((fresh) => {
-        if (fresh) {
-          setStore((prev) => ({
-            ...fresh,
-            bookings: updateDynamicStatuses(fresh.bookings),
-            isAdminAuthenticated: prev.isAdminAuthenticated
-          }));
-        }
-      });
+    const unsubscribe = subscribeToStoreChanges((freshData) => {
+      if (freshData) {
+        setStore((prev) => ({
+          ...freshData,
+          bookings: updateDynamicStatuses(freshData.bookings, freshData.postInspections),
+          isAdminAuthenticated: prev.isAdminAuthenticated
+        }));
+      }
     });
     return () => unsubscribe();
-  }, [store.isAdminAuthenticated]);
+  }, []);
 
   // Admin login / logout
   const handleAdminSuccess = () => {

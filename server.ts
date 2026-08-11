@@ -239,6 +239,18 @@ async function startServer() {
     });
   });
 
+  // Periodic SSE ping to prevent proxy/idle timeouts
+  setInterval(() => {
+    sseClients = sseClients.filter((res) => {
+      try {
+        res.write(`: ping\n\n`);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    });
+  }, 20000);
+
   // Supabase REST Protocol compatibility layer
   app.get("/rest/v1/:table", (req, res) => {
     const table = req.params.table;
