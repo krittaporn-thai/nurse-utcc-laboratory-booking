@@ -297,14 +297,36 @@ CREATE TABLE IF NOT EXISTS public.damages (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ENABLE ROW LEVEL SECURITY
+-- ENABLE ROW LEVEL SECURITY & CENTRAL ACCESS POLICIES
 ALTER TABLE public.laboratories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pre_inspection ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_inspection ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.damages ENABLE ROW LEVEL SECURITY;
 
--- Allow public read & insert for bookings
-CREATE POLICY "Public can view bookings" ON public.bookings FOR SELECT USING (true);
-CREATE POLICY "Public can make booking" ON public.bookings FOR INSERT WITH CHECK (true);
+-- 1. Laboratories: Public read for all users, Admin modify
+CREATE POLICY "Public read laboratories" ON public.laboratories FOR SELECT USING (true);
+CREATE POLICY "Public insert laboratories" ON public.laboratories FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public update laboratories" ON public.laboratories FOR UPDATE USING (true);
+CREATE POLICY "Public delete laboratories" ON public.laboratories FOR DELETE USING (true);
+
+-- 2. Bookings: Public read and create for all users (No user_id isolation)
+CREATE POLICY "Public read all bookings" ON public.bookings FOR SELECT USING (true);
+CREATE POLICY "Public insert bookings" ON public.bookings FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public update bookings" ON public.bookings FOR UPDATE USING (true);
+CREATE POLICY "Public delete bookings" ON public.bookings FOR DELETE USING (true);
+
+-- 3. Inspection & Damages: Public read & full access for central system
+CREATE POLICY "Public read pre_inspection" ON public.pre_inspection FOR SELECT USING (true);
+CREATE POLICY "Public insert pre_inspection" ON public.pre_inspection FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public update pre_inspection" ON public.pre_inspection FOR UPDATE USING (true);
+
+CREATE POLICY "Public read post_inspection" ON public.post_inspection FOR SELECT USING (true);
+CREATE POLICY "Public insert post_inspection" ON public.post_inspection FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public update post_inspection" ON public.post_inspection FOR UPDATE USING (true);
+
+CREATE POLICY "Public read damages" ON public.damages FOR SELECT USING (true);
+CREATE POLICY "Public insert damages" ON public.damages FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public update damages" ON public.damages FOR UPDATE USING (true);
+CREATE POLICY "Public delete damages" ON public.damages FOR DELETE USING (true);
 `;
