@@ -444,6 +444,41 @@ export async function createPreInspection(inspection: PreInspection): Promise<Pr
   return inspection;
 }
 
+export async function updatePreInspection(inspection: PreInspection): Promise<PreInspection> {
+  memoryStore.preInspections = memoryStore.preInspections.map((p) => (p.id === inspection.id ? inspection : p));
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const payload = {
+        inspection_date: inspection.inspection_date,
+        inspector_name: inspection.inspector_name,
+        notes: inspection.notes,
+        images: inspection.images,
+        consumables_checked: inspection.consumables_checked,
+        equipment_checked: inspection.equipment_checked,
+        assets_checked: inspection.assets_checked,
+        status: inspection.status
+      };
+      await client.from('pre_inspection').update(payload).eq('id', inspection.id);
+    } catch (e) {
+      console.error('updatePreInspection error:', e);
+    }
+  }
+  return inspection;
+}
+
+export async function deletePreInspection(inspectionId: string): Promise<void> {
+  memoryStore.preInspections = memoryStore.preInspections.filter((p) => p.id !== inspectionId);
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('pre_inspection').delete().eq('id', inspectionId);
+    } catch (e) {
+      console.error('deletePreInspection error:', e);
+    }
+  }
+}
+
 // --- Post-Inspections ---
 export async function getPostInspections(): Promise<PostInspection[]> {
   const client = getSupabaseClient();
@@ -503,6 +538,40 @@ export async function createPostInspection(inspection: PostInspection): Promise<
   return inspection;
 }
 
+export async function updatePostInspection(inspection: PostInspection): Promise<PostInspection> {
+  memoryStore.postInspections = memoryStore.postInspections.map((p) => (p.id === inspection.id ? inspection : p));
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const payload = {
+        inspection_date: inspection.inspection_date,
+        inspector_name: inspection.inspector_name,
+        consumables_status: inspection.consumables_status,
+        equipment_status: inspection.equipment_status,
+        assets_status: inspection.assets_status,
+        notes: inspection.notes,
+        images: inspection.images
+      };
+      await client.from('post_inspection').update(payload).eq('id', inspection.id);
+    } catch (e) {
+      console.error('updatePostInspection error:', e);
+    }
+  }
+  return inspection;
+}
+
+export async function deletePostInspection(inspectionId: string): Promise<void> {
+  memoryStore.postInspections = memoryStore.postInspections.filter((p) => p.id !== inspectionId);
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('post_inspection').delete().eq('id', inspectionId);
+    } catch (e) {
+      console.error('deletePostInspection error:', e);
+    }
+  }
+}
+
 // --- Damages ---
 export async function getDamages(): Promise<DamageLog[]> {
   const client = getSupabaseClient();
@@ -553,6 +622,28 @@ export async function createDamage(damage: DamageLog): Promise<DamageLog> {
       }
     } catch (e) {
       console.error('createDamage error:', e);
+    }
+  }
+  return damage;
+}
+
+export async function updateDamage(damage: DamageLog): Promise<DamageLog> {
+  memoryStore.damages = memoryStore.damages.map((d) => (d.id === damage.id ? damage : d));
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const payload = {
+        item_name: damage.item_name,
+        item_type: damage.item_type,
+        quantity: damage.quantity,
+        unit_price: damage.unit_price,
+        total_amount: damage.total_amount,
+        responsible_person: damage.responsible_person,
+        notes: damage.notes
+      };
+      await client.from('damages').update(payload).eq('id', damage.id);
+    } catch (e) {
+      console.error('updateDamage error:', e);
     }
   }
   return damage;

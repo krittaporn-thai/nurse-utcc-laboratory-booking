@@ -3,10 +3,12 @@ import {
   AlertTriangle,
   Plus,
   Trash2,
+  Edit,
   DollarSign,
   User,
   FileText,
-  Calculator
+  Calculator,
+  X
 } from 'lucide-react';
 import { DamageLog, Booking } from '../types';
 import { ImageUpload } from '../components/ImageUpload';
@@ -16,6 +18,7 @@ interface Props {
   bookings: Booking[];
   isAdmin: boolean;
   onSaveDamage: (damage: DamageLog) => void;
+  onUpdateDamage?: (damage: DamageLog) => void;
   onDeleteDamage: (damageId: string) => void;
   onOpenAdminModal: () => void;
 }
@@ -25,6 +28,7 @@ export const DamageLogView: React.FC<Props> = ({
   bookings,
   isAdmin,
   onSaveDamage,
+  onUpdateDamage,
   onDeleteDamage,
   onOpenAdminModal
 }) => {
@@ -36,6 +40,16 @@ export const DamageLogView: React.FC<Props> = ({
   const [responsiblePerson, setResponsiblePerson] = useState('');
   const [notes, setNotes] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+
+  // Edit Modal State
+  const [editingDamage, setEditingDamage] = useState<DamageLog | null>(null);
+  const [editBookingId, setEditBookingId] = useState('');
+  const [editItemName, setEditItemName] = useState('');
+  const [editItemType, setEditItemType] = useState<'consumable' | 'medical_equipment' | 'asset'>('asset');
+  const [editQuantity, setEditQuantity] = useState<number>(1);
+  const [editUnitPrice, setEditUnitPrice] = useState<number>(1000);
+  const [editResponsiblePerson, setEditResponsiblePerson] = useState('');
+  const [editNotes, setEditNotes] = useState('');
 
   if (!isAdmin) {
     return (
@@ -85,6 +99,40 @@ export const DamageLogView: React.FC<Props> = ({
     setQuantity(1);
     setUnitPrice(1000);
     setNotes('');
+  };
+
+  const openEditModal = (d: DamageLog) => {
+    setEditingDamage(d);
+    setEditBookingId(d.booking_id || '');
+    setEditItemName(d.item_name || '');
+    setEditItemType(d.item_type || 'asset');
+    setEditQuantity(d.quantity || 1);
+    setEditUnitPrice(d.unit_price || 0);
+    setEditResponsiblePerson(d.responsible_person || '');
+    setEditNotes(d.notes || '');
+  };
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDamage) return;
+
+    const updatedTotal = editQuantity * editUnitPrice;
+    const updated: DamageLog = {
+      ...editingDamage,
+      booking_id: editBookingId,
+      item_name: editItemName,
+      item_type: editItemType,
+      quantity: Number(editQuantity),
+      unit_price: Number(editUnitPrice),
+      total_amount: updatedTotal,
+      responsible_person: editResponsiblePerson,
+      notes: editNotes
+    };
+
+    if (onUpdateDamage) {
+      onUpdateDamage(updated);
+    }
+    setEditingDamage(null);
   };
 
   const totalAllDamages = damages.reduce((sum, d) => sum + d.total_amount, 0);
@@ -272,12 +320,26 @@ export const DamageLogView: React.FC<Props> = ({
                       {new Date(d.created_at).toLocaleDateString('th-TH')}
                     </td>
                     <td className="p-3 text-right">
-                      <button
-                        onClick={() => onDeleteDamage(d.id)}
-                        className="p-1 text-rose-500 hover:text-rose-700"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => openEditModal(d)}
+                          className="p-1 text-teal-600 hover:text-teal-800 dark:text-teal-400"
+                          title="แก้ไข"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm('คุณต้องการลบรายการความเสียหายนี้ใช่หรือไม่?')) {
+                              onDeleteDamage(d.id);
+                            }
+                          }}
+                          className="p-1 text-rose-500 hover:text-rose-700"
+                          title="ลบ"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -286,6 +348,117 @@ export const DamageLogView: React.FC<Props> = ({
           </table>
         </div>
       </div>
+
+      {/* Edit Damage Modal */}
+      {editingDamage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fadeIn">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4 max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setEditingDamage(null)}
+              className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-600 rounded-full"
+            >
+              <X size={20} />
+            </button>
+
+            <h3 className="font-bold text-base text-slate-900 dark:text-white">
+              แก้ไขรายการความเสียหาย (Admin)
+            </h3>
+
+            <form onSubmit={handleSaveEdit} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold mb-1">ชื่อรายการอุปกรณ์ที่ชำรุด/สูญหาย</label>
+                <input
+                  type="text"
+                  value={editItemName}
+                  onChange={(e) => setEditItemName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1">ประเภท</label>
+                <select
+                  value={editItemType}
+                  onChange={(e) => setEditItemType(e.target.value as any)}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl"
+                >
+                  <option value="asset">ครุภัณฑ์</option>
+                  <option value="medical_equipment">อุปกรณ์การแพทย์</option>
+                  <option value="consumable">วัสดุสิ้นเปลือง</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold mb-1">จำนวน</label>
+                  <input
+                    type="number"
+                    value={editQuantity}
+                    onChange={(e) => setEditQuantity(Number(e.target.value))}
+                    min={1}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">ราคาต่อหน่วย (บาท)</label>
+                  <input
+                    type="number"
+                    value={editUnitPrice}
+                    onChange={(e) => setEditUnitPrice(Number(e.target.value))}
+                    min={0}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/30 rounded-xl font-bold text-rose-800 dark:text-rose-200 flex justify-between">
+                <span>มูลค่าความเสียหายรวม:</span>
+                <span className="font-mono">{(editQuantity * editUnitPrice).toLocaleString()} บาท</span>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1">ผู้รับผิดชอบชดใช้</label>
+                <input
+                  type="text"
+                  value={editResponsiblePerson}
+                  onChange={(e) => setEditResponsiblePerson(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1">หมายเหตุเพิ่มเติม</label>
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  rows={2}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border rounded-xl"
+                ></textarea>
+              </div>
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingDamage(null)}
+                  className="flex-1 py-2 font-medium bg-slate-100 dark:bg-slate-800 rounded-xl"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 font-bold text-white bg-teal-600 rounded-xl shadow-md"
+                >
+                  บันทึกการแก้ไข
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

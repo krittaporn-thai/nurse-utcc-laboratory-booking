@@ -35,12 +35,18 @@ import {
   subscribeToStoreChanges,
   createBooking,
   updateBooking,
+  deleteBooking,
   createLab,
   updateLab,
   deleteLab,
   createPreInspection,
+  updatePreInspection,
+  deletePreInspection,
   createPostInspection,
+  updatePostInspection,
+  deletePostInspection,
   createDamage,
+  updateDamage,
   deleteDamage,
   updateDynamicStatuses
 } from './lib/supabase';
@@ -58,98 +64,96 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [preSelectedLabId, setPreSelectedLabId] = useState<string | undefined>(undefined);
-
-  // Modals
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [selectedStory, setSelectedStory] = useState<StoryItem | null>(null);
   const [selectedBookingDetail, setSelectedBookingDetail] = useState<Booking | null>(null);
   const [editingItemsBooking, setEditingItemsBooking] = useState<Booking | null>(null);
+  const [preSelectedLabId, setPreSelectedLabId] = useState<string | undefined>(undefined);
+  const [searchTerm, setSearchTerm] = useState('');
 
-  // Load central store from Supabase on mount
+  // 1. Initial Fetch on Mount
   useEffect(() => {
     let isMounted = true;
-    fetchFullStore(store.isAdminAuthenticated).then((data) => {
+    async function loadData() {
+      const data = await fetchFullStore(store.isAdminAuthenticated);
       if (isMounted && data) {
         setStore((prev) => ({
-          ...data,
-          isAdminAuthenticated: prev.isAdminAuthenticated
+          ...prev,
+          labs: data.labs,
+          inventory: data.inventory,
+          bookings: updateDynamicStatuses(data.bookings),
+          preInspections: data.preInspections,
+          postInspections: data.postInspections,
+          damages: data.damages
         }));
       }
-    });
-
-    // Real-time listener for multi-browser sync via Supabase Realtime
-    const unsubscribe = subscribeToStoreChanges((freshStore) => {
-      if (isMounted) {
-        setStore((prev) => ({
-          ...freshStore,
-          isAdminAuthenticated: prev.isAdminAuthenticated
-        }));
-      }
-    });
-
+    }
+    loadData();
     return () => {
       isMounted = false;
-      unsubscribe();
     };
   }, []);
 
-  // Recalculate dynamic statuses based on exact current DateTime whenever active tab changes or on mount
+  // 2. Realtime SSE Subscription
   useEffect(() => {
-    setStore((prev) => {
-      const updatedBookings = updateDynamicStatuses(prev.bookings, prev.postInspections);
-      const isChanged = updatedBookings.some((b, i) => b.status !== prev.bookings[i]?.status);
-      if (isChanged) {
-        return { ...prev, bookings: updatedBookings };
-      }
-      return prev;
+    const unsubscribe = subscribeToStoreChanges(() => {
+      fetchFullStore(store.isAdminAuthenticated).then((fresh) => {
+        if (fresh) {
+          setStore((prev) => ({
+            ...fresh,
+            bookings: updateDynamicStatuses(fresh.bookings),
+            isAdminAuthenticated: prev.isAdminAuthenticated
+          }));
+        }
+      });
     });
-  }, [activeTab]);
+    return () => unsubscribe();
+  }, [store.isAdminAuthenticated]);
 
-  // Admin login success handler
+  // Admin login / logout
   const handleAdminSuccess = () => {
     setStore((prev) => ({ ...prev, isAdminAuthenticated: true }));
+    setIsAdminModalOpen(false);
   };
 
   const handleAdminLogout = () => {
     setStore((prev) => ({ ...prev, isAdminAuthenticated: false }));
   };
 
-  // Add new booking handler
+  // Booking CRUD Handlers
   const handleCreateBooking = async (newBooking: Booking) => {
     await createBooking(newBooking);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
-    setActiveTab('dashboard');
   };
 
-  // Admin Approve booking handler
   const handleApproveBooking = async (bookingId: string) => {
-    const booking = store.bookings.find((b) => b.id === bookingId);
-    if (!booking) return;
-
-    const updated: Booking = { ...booking, status: 'approved' as const };
+    const target = store.bookings.find((b) => b.id === bookingId);
+    if (!target) return;
+    const updated: Booking = { ...target, status: 'approved' };
     await updateBooking(updated);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
-  // Admin Reject booking handler
   const handleRejectBooking = async (bookingId: string, reason: string) => {
-    const booking = store.bookings.find((b) => b.id === bookingId);
-    if (!booking) return;
-
-    const updated: Booking = { ...booking, status: 'rejected' as const, rejection_reason: reason };
+    const target = store.bookings.find((b) => b.id === bookingId);
+    if (!target) return;
+    const updated: Booking = { ...target, status: 'rejected', reject_reason: reason };
     await updateBooking(updated);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
-  // Update Booking (User or Admin edit)
   const handleUpdateBooking = async (updated: Booking) => {
     await updateBooking(updated);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
+  };
+
+  const handleDeleteBooking = async (bookingId: string) => {
+    await deleteBooking(bookingId);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
@@ -173,21 +177,53 @@ export default function App() {
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
-  // Inspection & Damage handlers
+  // Pre Inspection Handlers
   const handleSavePreInspection = async (inspection: PreInspection) => {
     await createPreInspection(inspection);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
+  const handleUpdatePreInspection = async (inspection: PreInspection) => {
+    await updatePreInspection(inspection);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
+  };
+
+  const handleDeletePreInspection = async (inspectionId: string) => {
+    await deletePreInspection(inspectionId);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
+  };
+
+  // Post Inspection Handlers
   const handleSavePostInspection = async (inspection: PostInspection) => {
     await createPostInspection(inspection);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
+  const handleUpdatePostInspection = async (inspection: PostInspection) => {
+    await updatePostInspection(inspection);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
+  };
+
+  const handleDeletePostInspection = async (inspectionId: string) => {
+    await deletePostInspection(inspectionId);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
+  };
+
+  // Damage Handlers
   const handleSaveDamage = async (damage: DamageLog) => {
     await createDamage(damage);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
+  };
+
+  const handleUpdateDamage = async (damage: DamageLog) => {
+    await updateDamage(damage);
     const fresh = await fetchFullStore(store.isAdminAuthenticated);
     setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
@@ -288,6 +324,7 @@ export default function App() {
               onApproveBooking={handleApproveBooking}
               onRejectBooking={handleRejectBooking}
               onUpdateBooking={handleUpdateBooking}
+              onDeleteBooking={handleDeleteBooking}
               onOpenAdminModal={() => setIsAdminModalOpen(true)}
             />
           )}
@@ -298,6 +335,8 @@ export default function App() {
               preInspections={store.preInspections}
               isAdmin={store.isAdminAuthenticated}
               onSavePreInspection={handleSavePreInspection}
+              onUpdatePreInspection={handleUpdatePreInspection}
+              onDeletePreInspection={handleDeletePreInspection}
               onOpenAdminModal={() => setIsAdminModalOpen(true)}
             />
           )}
@@ -308,6 +347,8 @@ export default function App() {
               postInspections={store.postInspections}
               isAdmin={store.isAdminAuthenticated}
               onSavePostInspection={handleSavePostInspection}
+              onUpdatePostInspection={handleUpdatePostInspection}
+              onDeletePostInspection={handleDeletePostInspection}
               onOpenAdminModal={() => setIsAdminModalOpen(true)}
             />
           )}
@@ -318,6 +359,7 @@ export default function App() {
               bookings={store.bookings}
               isAdmin={store.isAdminAuthenticated}
               onSaveDamage={handleSaveDamage}
+              onUpdateDamage={handleUpdateDamage}
               onDeleteDamage={handleDeleteDamage}
               onOpenAdminModal={() => setIsAdminModalOpen(true)}
             />
@@ -376,4 +418,3 @@ export default function App() {
     </div>
   );
 }
-
