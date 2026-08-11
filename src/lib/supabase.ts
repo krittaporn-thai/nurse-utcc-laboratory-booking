@@ -95,12 +95,12 @@ export interface AppStoreData {
 
 // Memory fallback cache in runtime
 let memoryStore: AppStoreData = {
-  labs: [],
-  inventory: [],
-  bookings: [],
-  preInspections: [],
-  postInspections: [],
-  damages: [],
+  labs: INITIAL_LABS,
+  inventory: INITIAL_INVENTORY,
+  bookings: INITIAL_BOOKINGS,
+  preInspections: INITIAL_PRE_INSPECTIONS,
+  postInspections: INITIAL_POST_INSPECTIONS,
+  damages: INITIAL_DAMAGES,
   isAdminAuthenticated: false
 };
 
@@ -108,74 +108,67 @@ let memoryStore: AppStoreData = {
 // SUPABASE SERVICE LAYER (SINGLE SOURCE OF TRUTH)
 // =========================================
 
+function mapLabRecord(item: any): Laboratory {
+  return {
+    id: String(item.id),
+    code: String(item.code || ''),
+    name: String(item.name || ''),
+    building: String(item.building || ''),
+    floor: String(item.floor || ''),
+    capacity: Number(item.capacity || 0),
+    description: String(item.description || ''),
+    image_url: String(item.image_url || ''),
+    is_ready: Boolean(item.is_ready ?? true),
+    created_at: String(item.created_at || new Date().toISOString())
+  };
+}
+
+async function seedInitialLabs(client: SupabaseClient) {
+  try {
+    const payload = INITIAL_LABS.map((l) => ({
+      id: l.id,
+      code: l.code,
+      name: l.name,
+      building: l.building,
+      floor: l.floor,
+      capacity: l.capacity,
+      description: l.description,
+      image_url: l.image_url,
+      is_ready: l.is_ready,
+      created_at: l.created_at
+    }));
+    await client.from('laboratories').upsert(payload);
+  } catch (e) {
+    console.error('Failed to seed initial labs:', e);
+  }
+}
+
 // --- Laboratories ---
 export async function getLabs(): Promise<Laboratory[]> {
   const client = getSupabaseClient();
 
   try {
     const { data, error } = await client.from('laboratories').select('*').order('code', { ascending: true });
-    if (error || !data) {
-      console.error('LOAD LABS ERROR:', error);
-      const localClient = getLocalSupabaseClient();
-      const { data: localData } = await localClient.from('laboratories').select('*').order('code', { ascending: true });
-      if (localData) {
-        const labs: Laboratory[] = localData.map((item) => ({
-          id: String(item.id),
-          code: String(item.code || ''),
-          name: String(item.name || ''),
-          building: String(item.building || ''),
-          floor: String(item.floor || ''),
-          capacity: Number(item.capacity || 0),
-          description: String(item.description || ''),
-          image_url: String(item.image_url || ''),
-          is_ready: Boolean(item.is_ready ?? true),
-          created_at: String(item.created_at || new Date().toISOString())
-        }));
+    if (error || !data || data.length === 0) {
+      console.log('Laboratories table empty or fetch error. Seeding default labs...');
+      await seedInitialLabs(client);
+      const { data: refetched } = await client.from('laboratories').select('*').order('code', { ascending: true });
+      if (refetched && refetched.length > 0) {
+        const labs = refetched.map(mapLabRecord);
         memoryStore.labs = labs;
         return labs;
       }
-      return memoryStore.labs;
+      memoryStore.labs = INITIAL_LABS;
+      return INITIAL_LABS;
     }
-    console.log('LOAD RESULT', data);
-    const labs: Laboratory[] = data.map((item) => ({
-      id: String(item.id),
-      code: String(item.code || ''),
-      name: String(item.name || ''),
-      building: String(item.building || ''),
-      floor: String(item.floor || ''),
-      capacity: Number(item.capacity || 0),
-      description: String(item.description || ''),
-      image_url: String(item.image_url || ''),
-      is_ready: Boolean(item.is_ready ?? true),
-      created_at: String(item.created_at || new Date().toISOString())
-    }));
+
+    const labs = data.map(mapLabRecord);
     memoryStore.labs = labs;
     return labs;
   } catch (err) {
     console.error('getLabs exception:', err);
-    try {
-      const localClient = getLocalSupabaseClient();
-      const { data: localData } = await localClient.from('laboratories').select('*').order('code', { ascending: true });
-      if (localData) {
-        const labs: Laboratory[] = localData.map((item) => ({
-          id: String(item.id),
-          code: String(item.code || ''),
-          name: String(item.name || ''),
-          building: String(item.building || ''),
-          floor: String(item.floor || ''),
-          capacity: Number(item.capacity || 0),
-          description: String(item.description || ''),
-          image_url: String(item.image_url || ''),
-          is_ready: Boolean(item.is_ready ?? true),
-          created_at: String(item.created_at || new Date().toISOString())
-        }));
-        memoryStore.labs = labs;
-        return labs;
-      }
-    } catch (e) {
-      // ignore
-    }
-    return memoryStore.labs;
+    memoryStore.labs = INITIAL_LABS;
+    return INITIAL_LABS;
   }
 }
 
