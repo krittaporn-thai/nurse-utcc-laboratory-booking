@@ -24,17 +24,39 @@ import { SupabaseSettingsModal } from './views/SupabaseSettingsModal';
 
 import {
   Laboratory,
-  InventoryItem,
   Booking,
   PreInspection,
   PostInspection,
   DamageLog,
   StoryItem
 } from './types';
-import { loadLocalStore, saveLocalStore, updateDynamicStatuses } from './lib/supabase';
+import {
+  fetchFullStore,
+  subscribeToStoreChanges,
+  createBooking,
+  updateBooking,
+  createLab,
+  updateLab,
+  deleteLab,
+  createPreInspection,
+  createPostInspection,
+  createDamage,
+  deleteDamage,
+  updateDynamicStatuses
+} from './lib/supabase';
+import { INITIAL_LABS, INITIAL_INVENTORY, INITIAL_BOOKINGS, INITIAL_PRE_INSPECTIONS, INITIAL_POST_INSPECTIONS, INITIAL_DAMAGES } from './lib/initialData';
 
 export default function App() {
-  const [store, setStore] = useState(() => loadLocalStore());
+  const [store, setStore] = useState({
+    labs: INITIAL_LABS,
+    inventory: INITIAL_INVENTORY,
+    bookings: INITIAL_BOOKINGS,
+    preInspections: INITIAL_PRE_INSPECTIONS,
+    postInspections: INITIAL_POST_INSPECTIONS,
+    damages: INITIAL_DAMAGES,
+    isAdminAuthenticated: false
+  });
+
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
   const [preSelectedLabId, setPreSelectedLabId] = useState<string | undefined>(undefined);
@@ -45,6 +67,34 @@ export default function App() {
   const [selectedStory, setSelectedStory] = useState<StoryItem | null>(null);
   const [selectedBookingDetail, setSelectedBookingDetail] = useState<Booking | null>(null);
   const [editingItemsBooking, setEditingItemsBooking] = useState<Booking | null>(null);
+
+  // Load central store from Supabase on mount
+  useEffect(() => {
+    let isMounted = true;
+    fetchFullStore(store.isAdminAuthenticated).then((data) => {
+      if (isMounted && data) {
+        setStore((prev) => ({
+          ...data,
+          isAdminAuthenticated: prev.isAdminAuthenticated
+        }));
+      }
+    });
+
+    // Real-time listener for multi-browser sync via Supabase Realtime
+    const unsubscribe = subscribeToStoreChanges((freshStore) => {
+      if (isMounted) {
+        setStore((prev) => ({
+          ...freshStore,
+          isAdminAuthenticated: prev.isAdminAuthenticated
+        }));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   // Recalculate dynamic statuses based on exact current DateTime whenever active tab changes or on mount
   useEffect(() => {
@@ -58,31 +108,6 @@ export default function App() {
     });
   }, [activeTab]);
 
-  // Sync state to local storage whenever store updates
-  useEffect(() => {
-    saveLocalStore(store);
-  }, [store]);
-
-  // Real-time synchronization across browser tabs and windows
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'nurse_lab_store_v3' && e.newValue) {
-        try {
-          const newData = JSON.parse(e.newValue);
-          setStore(newData);
-        } catch (err) {
-          console.error('Failed to sync storage event:', err);
-        }
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, []);
-
   // Admin login success handler
   const handleAdminSuccess = () => {
     setStore((prev) => ({ ...prev, isAdminAuthenticated: true }));
@@ -93,53 +118,46 @@ export default function App() {
   };
 
   // Add new booking handler
-  const handleCreateBooking = (newBooking: Booking) => {
+  const handleCreateBooking = async (newBooking: Booking) => {
+    const saved = await createBooking(newBooking);
     setStore((prev) => ({
       ...prev,
-      bookings: [newBooking, ...prev.bookings]
+      bookings: [saved, ...prev.bookings]
     }));
-
     setActiveTab('dashboard');
   };
 
   // Admin Approve booking handler
-  const handleApproveBooking = (bookingId: string) => {
+  const handleApproveBooking = async (bookingId: string) => {
     const booking = store.bookings.find((b) => b.id === bookingId);
     if (!booking) return;
 
-    const updatedBookings = store.bookings.map((b) => {
-      if (b.id === bookingId) {
-        return { ...b, status: 'approved' as const };
-      }
-      return b;
-    });
+    const updated: Booking = { ...booking, status: 'approved' as const };
+    await updateBooking(updated);
 
     setStore((prev) => ({
       ...prev,
-      bookings: updatedBookings
+      bookings: prev.bookings.map((b) => (b.id === bookingId ? updated : b))
     }));
   };
 
   // Admin Reject booking handler
-  const handleRejectBooking = (bookingId: string, reason: string) => {
+  const handleRejectBooking = async (bookingId: string, reason: string) => {
     const booking = store.bookings.find((b) => b.id === bookingId);
     if (!booking) return;
 
-    const updatedBookings = store.bookings.map((b) => {
-      if (b.id === bookingId) {
-        return { ...b, status: 'rejected' as const, rejection_reason: reason };
-      }
-      return b;
-    });
+    const updated: Booking = { ...booking, status: 'rejected' as const, rejection_reason: reason };
+    await updateBooking(updated);
 
     setStore((prev) => ({
       ...prev,
-      bookings: updatedBookings
+      bookings: prev.bookings.map((b) => (b.id === bookingId ? updated : b))
     }));
   };
 
   // Update Booking (User or Admin edit)
-  const handleUpdateBooking = (updated: Booking) => {
+  const handleUpdateBooking = async (updated: Booking) => {
+    await updateBooking(updated);
     setStore((prev) => ({
       ...prev,
       bookings: prev.bookings.map((b) => (b.id === updated.id ? updated : b))
@@ -147,18 +165,21 @@ export default function App() {
   };
 
   // Lab CRUD handlers
-  const handleAddLab = (lab: Laboratory) => {
-    setStore((prev) => ({ ...prev, labs: [...prev.labs, lab] }));
+  const handleAddLab = async (lab: Laboratory) => {
+    const saved = await createLab(lab);
+    setStore((prev) => ({ ...prev, labs: [saved, ...prev.labs] }));
   };
 
-  const handleEditLab = (lab: Laboratory) => {
+  const handleEditLab = async (lab: Laboratory) => {
+    await updateLab(lab);
     setStore((prev) => ({
       ...prev,
       labs: prev.labs.map((l) => (l.id === lab.id ? lab : l))
     }));
   };
 
-  const handleDeleteLab = (labId: string) => {
+  const handleDeleteLab = async (labId: string) => {
+    await deleteLab(labId);
     setStore((prev) => ({
       ...prev,
       labs: prev.labs.filter((l) => l.id !== labId)
@@ -166,34 +187,38 @@ export default function App() {
   };
 
   // Inspection & Damage handlers
-  const handleSavePreInspection = (inspection: PreInspection) => {
+  const handleSavePreInspection = async (inspection: PreInspection) => {
+    const saved = await createPreInspection(inspection);
     setStore((prev) => ({
       ...prev,
-      preInspections: [inspection, ...prev.preInspections],
+      preInspections: [saved, ...prev.preInspections],
       bookings: prev.bookings.map((b) =>
         b.id === inspection.booking_id ? { ...b, pre_inspection_done: true } : b
       )
     }));
   };
 
-  const handleSavePostInspection = (inspection: PostInspection) => {
+  const handleSavePostInspection = async (inspection: PostInspection) => {
+    const saved = await createPostInspection(inspection);
     setStore((prev) => ({
       ...prev,
-      postInspections: [inspection, ...prev.postInspections],
+      postInspections: [saved, ...prev.postInspections],
       bookings: prev.bookings.map((b) =>
         b.id === inspection.booking_id ? { ...b, status: 'completed' as const, post_inspection_done: true } : b
       )
     }));
   };
 
-  const handleSaveDamage = (damage: DamageLog) => {
+  const handleSaveDamage = async (damage: DamageLog) => {
+    const saved = await createDamage(damage);
     setStore((prev) => ({
       ...prev,
-      damages: [damage, ...prev.damages]
+      damages: [saved, ...prev.damages]
     }));
   };
 
-  const handleDeleteDamage = (damageId: string) => {
+  const handleDeleteDamage = async (damageId: string) => {
+    await deleteDamage(damageId);
     setStore((prev) => ({
       ...prev,
       damages: prev.damages.filter((d) => d.id !== damageId)
@@ -378,3 +403,4 @@ export default function App() {
     </div>
   );
 }
+

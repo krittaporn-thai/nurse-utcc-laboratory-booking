@@ -6,7 +6,6 @@ import {
   PreInspection,
   PostInspection,
   DamageLog,
-  BookingStatus,
   LabUsageStat
 } from '../types';
 import {
@@ -17,10 +16,10 @@ import {
   INITIAL_POST_INSPECTIONS,
   INITIAL_DAMAGES
 } from './initialData';
+import { calculateBookingStatus } from './dateUtils';
 
 // Supabase configuration state
 const STORAGE_KEY_SUPABASE = 'nurse_lab_supabase_config';
-const STORAGE_KEY_DATA = 'nurse_lab_store_v3';
 
 export interface SupabaseConfig {
   url: string;
@@ -46,7 +45,11 @@ export function getSupabaseConfig(): SupabaseConfig {
 }
 
 export function saveSupabaseConfig(config: SupabaseConfig) {
-  localStorage.setItem(STORAGE_KEY_SUPABASE, JSON.stringify(config));
+  try {
+    localStorage.setItem(STORAGE_KEY_SUPABASE, JSON.stringify(config));
+  } catch (e) {
+    console.error('Failed to save Supabase config', e);
+  }
 }
 
 let supabaseInstance: SupabaseClient | null = null;
@@ -62,7 +65,6 @@ export function getSupabaseClient(): SupabaseClient | null {
   return null;
 }
 
-// Local Persistent Store Engine
 export interface AppStoreData {
   labs: Laboratory[];
   inventory: InventoryItem[];
@@ -71,81 +73,556 @@ export interface AppStoreData {
   postInspections: PostInspection[];
   damages: DamageLog[];
   isAdminAuthenticated: boolean;
-  adminCode: string;
 }
 
-export function loadLocalStore(): AppStoreData {
+// Memory fallback cache in runtime (No localStorage persistence for store data)
+let memoryStore: AppStoreData = {
+  labs: INITIAL_LABS,
+  inventory: INITIAL_INVENTORY,
+  bookings: INITIAL_BOOKINGS,
+  preInspections: INITIAL_PRE_INSPECTIONS,
+  postInspections: INITIAL_POST_INSPECTIONS,
+  damages: INITIAL_DAMAGES,
+  isAdminAuthenticated: false
+};
+
+// =========================================
+// SUPABASE SERVICE LAYER (SINGLE SOURCE OF TRUTH)
+// =========================================
+
+// --- Laboratories ---
+export async function getLabs(): Promise<Laboratory[]> {
+  const client = getSupabaseClient();
+  if (!client) return memoryStore.labs;
+
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_DATA);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      // Auto-update booking statuses based on current time
-      if (parsed.bookings) {
-        parsed.bookings = updateDynamicStatuses(parsed.bookings, parsed.postInspections || []);
-      }
-      return {
-        labs: parsed.labs || INITIAL_LABS,
-        inventory: parsed.inventory || INITIAL_INVENTORY,
-        bookings: parsed.bookings || INITIAL_BOOKINGS,
-        preInspections: parsed.preInspections || INITIAL_PRE_INSPECTIONS,
-        postInspections: parsed.postInspections || INITIAL_POST_INSPECTIONS,
-        damages: parsed.damages || INITIAL_DAMAGES,
-        isAdminAuthenticated: parsed.isAdminAuthenticated || false,
-        adminCode: 'NURSEUTCC01'
-      };
+    const { data, error } = await client.from('laboratories').select('*').order('code', { ascending: true });
+    if (error) {
+      console.error('Error fetching laboratories:', error);
+      return memoryStore.labs;
     }
+    if (!data || data.length === 0) {
+      // Seed initial labs to Supabase central database if table is empty
+      await seedInitialLabs(client);
+      return INITIAL_LABS;
+    }
+    memoryStore.labs = data.map((item) => ({
+      id: item.id,
+      code: item.code,
+      name: item.name,
+      building: item.building,
+      floor: item.floor,
+      capacity: Number(item.capacity),
+      description: item.description || '',
+      image_url: item.image_url || '',
+      is_ready: item.is_ready ?? true,
+      created_at: item.created_at || new Date().toISOString()
+    }));
+    return memoryStore.labs;
   } catch (err) {
-    console.error('Error loading local store:', err);
+    console.error('getLabs exception:', err);
+    return memoryStore.labs;
   }
+}
+
+async function seedInitialLabs(client: SupabaseClient) {
+  try {
+    const payload = INITIAL_LABS.map((l) => ({
+      id: l.id,
+      code: l.code,
+      name: l.name,
+      building: l.building,
+      floor: l.floor,
+      capacity: l.capacity,
+      description: l.description,
+      image_url: l.image_url,
+      is_ready: l.is_ready
+    }));
+    await client.from('laboratories').upsert(payload);
+  } catch (e) {
+    console.error('Failed to seed initial labs:', e);
+  }
+}
+
+export async function createLab(lab: Laboratory): Promise<Laboratory> {
+  memoryStore.labs = [lab, ...memoryStore.labs];
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('laboratories').insert({
+        id: lab.id,
+        code: lab.code,
+        name: lab.name,
+        building: lab.building,
+        floor: lab.floor,
+        capacity: lab.capacity,
+        description: lab.description,
+        image_url: lab.image_url,
+        is_ready: lab.is_ready
+      });
+    } catch (e) {
+      console.error('createLab error:', e);
+    }
+  }
+  return lab;
+}
+
+export async function updateLab(lab: Laboratory): Promise<Laboratory> {
+  memoryStore.labs = memoryStore.labs.map((l) => (l.id === lab.id ? lab : l));
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('laboratories').update({
+        code: lab.code,
+        name: lab.name,
+        building: lab.building,
+        floor: lab.floor,
+        capacity: lab.capacity,
+        description: lab.description,
+        image_url: lab.image_url,
+        is_ready: lab.is_ready
+      }).eq('id', lab.id);
+    } catch (e) {
+      console.error('updateLab error:', e);
+    }
+  }
+  return lab;
+}
+
+export async function deleteLab(labId: string): Promise<void> {
+  memoryStore.labs = memoryStore.labs.filter((l) => l.id !== labId);
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('laboratories').delete().eq('id', labId);
+    } catch (e) {
+      console.error('deleteLab error:', e);
+    }
+  }
+}
+
+// --- Bookings ---
+export async function getBookings(): Promise<Booking[]> {
+  const client = getSupabaseClient();
+  if (!client) return memoryStore.bookings;
+
+  try {
+    const { data, error } = await client.from('bookings').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.error('Error fetching bookings:', error);
+      return memoryStore.bookings;
+    }
+    if (!data || data.length === 0) {
+      await seedInitialBookings(client);
+      return updateDynamicStatuses(INITIAL_BOOKINGS, memoryStore.postInspections);
+    }
+    const formatted: Booking[] = data.map((item) => ({
+      id: item.id,
+      booking_code: item.booking_code,
+      requester_name: item.requester_name,
+      department: item.department,
+      faculty: item.faculty,
+      phone: item.phone,
+      email: item.email,
+      subject_code: item.subject_code,
+      subject_name: item.subject_name,
+      activity_name: item.activity_name,
+      objective: item.objective || '',
+      participant_count: Number(item.participant_count || 1),
+      lab_id: item.lab_id,
+      lab_name: item.lab_name,
+      booking_date: item.booking_date,
+      start_time: item.start_time,
+      end_time: item.end_time,
+      status: item.status,
+      consumables: item.consumables || [],
+      medical_equipment: item.medical_equipment || [],
+      assets: item.assets || [],
+      terms_accepted: item.terms_accepted ?? true,
+      rejection_reason: item.rejection_reason,
+      pre_inspection_done: item.pre_inspection_done ?? false,
+      post_inspection_done: item.post_inspection_done ?? false,
+      created_at: item.created_at || new Date().toISOString()
+    }));
+    memoryStore.bookings = updateDynamicStatuses(formatted, memoryStore.postInspections);
+    return memoryStore.bookings;
+  } catch (err) {
+    console.error('getBookings exception:', err);
+    return memoryStore.bookings;
+  }
+}
+
+async function seedInitialBookings(client: SupabaseClient) {
+  try {
+    const payload = INITIAL_BOOKINGS.map((b) => ({
+      id: b.id,
+      booking_code: b.booking_code,
+      requester_name: b.requester_name,
+      department: b.department,
+      faculty: b.faculty,
+      phone: b.phone,
+      email: b.email,
+      subject_code: b.subject_code,
+      subject_name: b.subject_name,
+      activity_name: b.activity_name,
+      objective: b.objective,
+      participant_count: b.participant_count,
+      lab_id: b.lab_id,
+      lab_name: b.lab_name,
+      booking_date: b.booking_date,
+      start_time: b.start_time,
+      end_time: b.end_time,
+      status: b.status,
+      consumables: b.consumables,
+      medical_equipment: b.medical_equipment,
+      assets: b.assets,
+      terms_accepted: b.terms_accepted,
+      rejection_reason: b.rejection_reason
+    }));
+    await client.from('bookings').upsert(payload);
+  } catch (e) {
+    console.error('Failed to seed initial bookings:', e);
+  }
+}
+
+export async function createBooking(booking: Booking): Promise<Booking> {
+  memoryStore.bookings = [booking, ...memoryStore.bookings];
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('bookings').insert({
+        id: booking.id,
+        booking_code: booking.booking_code,
+        requester_name: booking.requester_name,
+        department: booking.department,
+        faculty: booking.faculty,
+        phone: booking.phone,
+        email: booking.email,
+        subject_code: booking.subject_code,
+        subject_name: booking.subject_name,
+        activity_name: booking.activity_name,
+        objective: booking.objective,
+        participant_count: booking.participant_count,
+        lab_id: booking.lab_id,
+        lab_name: booking.lab_name,
+        booking_date: booking.booking_date,
+        start_time: booking.start_time,
+        end_time: booking.end_time,
+        status: booking.status,
+        consumables: booking.consumables,
+        medical_equipment: booking.medical_equipment,
+        assets: booking.assets,
+        terms_accepted: booking.terms_accepted,
+        rejection_reason: booking.rejection_reason
+      });
+    } catch (e) {
+      console.error('createBooking error:', e);
+    }
+  }
+  return booking;
+}
+
+export async function updateBooking(booking: Booking): Promise<Booking> {
+  memoryStore.bookings = memoryStore.bookings.map((b) => (b.id === booking.id ? booking : b));
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('bookings').update({
+        booking_code: booking.booking_code,
+        requester_name: booking.requester_name,
+        department: booking.department,
+        faculty: booking.faculty,
+        phone: booking.phone,
+        email: booking.email,
+        subject_code: booking.subject_code,
+        subject_name: booking.subject_name,
+        activity_name: booking.activity_name,
+        objective: booking.objective,
+        participant_count: booking.participant_count,
+        lab_id: booking.lab_id,
+        lab_name: booking.lab_name,
+        booking_date: booking.booking_date,
+        start_time: booking.start_time,
+        end_time: booking.end_time,
+        status: booking.status,
+        consumables: booking.consumables,
+        medical_equipment: booking.medical_equipment,
+        assets: booking.assets,
+        terms_accepted: booking.terms_accepted,
+        rejection_reason: booking.rejection_reason,
+        pre_inspection_done: booking.pre_inspection_done,
+        post_inspection_done: booking.post_inspection_done
+      }).eq('id', booking.id);
+    } catch (e) {
+      console.error('updateBooking error:', e);
+    }
+  }
+  return booking;
+}
+
+export async function deleteBooking(bookingId: string): Promise<void> {
+  memoryStore.bookings = memoryStore.bookings.filter((b) => b.id !== bookingId);
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('bookings').delete().eq('id', bookingId);
+    } catch (e) {
+      console.error('deleteBooking error:', e);
+    }
+  }
+}
+
+// --- Pre-Inspections ---
+export async function getPreInspections(): Promise<PreInspection[]> {
+  const client = getSupabaseClient();
+  if (!client) return memoryStore.preInspections;
+
+  try {
+    const { data, error } = await client.from('pre_inspection').select('*').order('created_at', { ascending: false });
+    if (error || !data) return memoryStore.preInspections;
+    memoryStore.preInspections = data.map((item) => ({
+      id: item.id,
+      booking_id: item.booking_id,
+      inspection_date: item.inspection_date,
+      inspector_name: item.inspector_name,
+      notes: item.notes || '',
+      images: item.images || [],
+      consumables_checked: item.consumables_checked ?? true,
+      equipment_checked: item.equipment_checked ?? true,
+      assets_checked: item.assets_checked ?? true,
+      status: item.status || 'pass',
+      created_at: item.created_at || new Date().toISOString()
+    }));
+    return memoryStore.preInspections;
+  } catch (err) {
+    return memoryStore.preInspections;
+  }
+}
+
+export async function createPreInspection(inspection: PreInspection): Promise<PreInspection> {
+  memoryStore.preInspections = [inspection, ...memoryStore.preInspections];
+  memoryStore.bookings = memoryStore.bookings.map((b) =>
+    b.id === inspection.booking_id ? { ...b, pre_inspection_done: true } : b
+  );
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('pre_inspection').insert({
+        id: inspection.id,
+        booking_id: inspection.booking_id,
+        inspection_date: inspection.inspection_date,
+        inspector_name: inspection.inspector_name,
+        notes: inspection.notes,
+        images: inspection.images,
+        consumables_checked: inspection.consumables_checked,
+        equipment_checked: inspection.equipment_checked,
+        assets_checked: inspection.assets_checked,
+        status: inspection.status
+      });
+      await client.from('bookings').update({ pre_inspection_done: true }).eq('id', inspection.booking_id);
+    } catch (e) {
+      console.error('createPreInspection error:', e);
+    }
+  }
+  return inspection;
+}
+
+// --- Post-Inspections ---
+export async function getPostInspections(): Promise<PostInspection[]> {
+  const client = getSupabaseClient();
+  if (!client) return memoryStore.postInspections;
+
+  try {
+    const { data, error } = await client.from('post_inspection').select('*').order('created_at', { ascending: false });
+    if (error || !data) return memoryStore.postInspections;
+    memoryStore.postInspections = data.map((item) => ({
+      id: item.id,
+      booking_id: item.booking_id,
+      inspection_date: item.inspection_date,
+      inspector_name: item.inspector_name,
+      consumables_status: item.consumables_status || 'complete',
+      equipment_status: item.equipment_status || 'complete',
+      assets_status: item.assets_status || 'complete',
+      notes: item.notes || '',
+      images: item.images || [],
+      created_at: item.created_at || new Date().toISOString()
+    }));
+    return memoryStore.postInspections;
+  } catch (err) {
+    return memoryStore.postInspections;
+  }
+}
+
+export async function createPostInspection(inspection: PostInspection): Promise<PostInspection> {
+  memoryStore.postInspections = [inspection, ...memoryStore.postInspections];
+  memoryStore.bookings = memoryStore.bookings.map((b) =>
+    b.id === inspection.booking_id ? { ...b, status: 'completed' as const, post_inspection_done: true } : b
+  );
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('post_inspection').insert({
+        id: inspection.id,
+        booking_id: inspection.booking_id,
+        inspection_date: inspection.inspection_date,
+        inspector_name: inspection.inspector_name,
+        consumables_status: inspection.consumables_status,
+        equipment_status: inspection.equipment_status,
+        assets_status: inspection.assets_status,
+        notes: inspection.notes,
+        images: inspection.images
+      });
+      await client.from('bookings').update({ status: 'completed', post_inspection_done: true }).eq('id', inspection.booking_id);
+    } catch (e) {
+      console.error('createPostInspection error:', e);
+    }
+  }
+  return inspection;
+}
+
+// --- Damages ---
+export async function getDamages(): Promise<DamageLog[]> {
+  const client = getSupabaseClient();
+  if (!client) return memoryStore.damages;
+
+  try {
+    const { data, error } = await client.from('damages').select('*').order('created_at', { ascending: false });
+    if (error || !data) return memoryStore.damages;
+    memoryStore.damages = data.map((item) => ({
+      id: item.id,
+      booking_id: item.booking_id,
+      item_name: item.item_name,
+      item_type: item.item_type,
+      quantity: Number(item.quantity || 1),
+      unit_price: Number(item.unit_price || 0),
+      total_amount: Number(item.total_amount || 0),
+      responsible_person: item.responsible_person || '',
+      notes: item.notes || '',
+      created_at: item.created_at || new Date().toISOString()
+    }));
+    return memoryStore.damages;
+  } catch (err) {
+    return memoryStore.damages;
+  }
+}
+
+export async function createDamage(damage: DamageLog): Promise<DamageLog> {
+  memoryStore.damages = [damage, ...memoryStore.damages];
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('damages').insert({
+        id: damage.id,
+        booking_id: damage.booking_id,
+        item_name: damage.item_name,
+        item_type: damage.item_type,
+        quantity: damage.quantity,
+        unit_price: damage.unit_price,
+        total_amount: damage.total_amount,
+        responsible_person: damage.responsible_person,
+        notes: damage.notes
+      });
+    } catch (e) {
+      console.error('createDamage error:', e);
+    }
+  }
+  return damage;
+}
+
+export async function deleteDamage(damageId: string): Promise<void> {
+  memoryStore.damages = memoryStore.damages.filter((d) => d.id !== damageId);
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      await client.from('damages').delete().eq('id', damageId);
+    } catch (e) {
+      console.error('deleteDamage error:', e);
+    }
+  }
+}
+
+// --- Admin Settings Verification ---
+export async function verifyAdminPasscodeInDb(inputPasscode: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const { data } = await client.from('admin_settings').select('setting_value').eq('setting_key', 'admin_passcode').single();
+      if (data && data.setting_value) {
+        return inputPasscode.trim() === data.setting_value.trim();
+      }
+    } catch (e) {
+      // Fallback if table not queried
+    }
+  }
+  return inputPasscode.trim().toUpperCase() === 'NURSEUTCC01';
+}
+
+// --- Full Store Fetcher ---
+export async function fetchFullStore(isAdminAuth: boolean = false): Promise<AppStoreData> {
+  const [labs, postInspections, preInspections, bookings, damages] = await Promise.all([
+    getLabs(),
+    getPostInspections(),
+    getPreInspections(),
+    getBookings(),
+    getDamages()
+  ]);
+
+  const updatedBookings = updateDynamicStatuses(bookings, postInspections);
 
   return {
-    labs: INITIAL_LABS,
+    labs,
     inventory: INITIAL_INVENTORY,
-    bookings: INITIAL_BOOKINGS,
-    preInspections: INITIAL_PRE_INSPECTIONS,
-    postInspections: INITIAL_POST_INSPECTIONS,
-    damages: INITIAL_DAMAGES,
-    isAdminAuthenticated: false,
-    adminCode: 'NURSEUTCC01'
+    bookings: updatedBookings,
+    preInspections,
+    postInspections,
+    damages,
+    isAdminAuthenticated: isAdminAuth
   };
 }
 
-export function saveLocalStore(data: Partial<AppStoreData>) {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_DATA);
-    let current: Partial<AppStoreData> = {};
-    if (raw) {
-      try {
-        current = JSON.parse(raw);
-      } catch (e) {
-        console.error('Failed to parse existing store:', e);
-      }
-    }
-    const updated = { ...current, ...data };
-    localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(updated));
-    return updated;
-  } catch (err) {
-    console.error('Error saving local store:', err);
-    return data as AppStoreData;
-  }
+// --- Supabase Realtime Subscription ---
+export function subscribeToStoreChanges(onStoreUpdate: (data: AppStoreData) => void): () => void {
+  const client = getSupabaseClient();
+  if (!client) return () => {};
+
+  const channel = client
+    .channel('public-central-db')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'laboratories' }, async () => {
+      const fresh = await fetchFullStore();
+      onStoreUpdate(fresh);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, async () => {
+      const fresh = await fetchFullStore();
+      onStoreUpdate(fresh);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pre_inspection' }, async () => {
+      const fresh = await fetchFullStore();
+      onStoreUpdate(fresh);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'post_inspection' }, async () => {
+      const fresh = await fetchFullStore();
+      onStoreUpdate(fresh);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'damages' }, async () => {
+      const fresh = await fetchFullStore();
+      onStoreUpdate(fresh);
+    })
+    .subscribe();
+
+  return () => {
+    client.removeChannel(channel);
+  };
 }
 
-import { calculateBookingStatus } from './dateUtils';
-
-// Update booking status dynamic rules based strictly on full DateTime comparison:
-// 1. รอดำเนินการ (สีเหลือง): current_datetime < booking_start_datetime
-// 2. กำลังใช้งาน (สีเขียว): booking_start_datetime <= current_datetime < booking_end_datetime
-// 3. เสร็จสิ้น (สีแดง): current_datetime >= booking_end_datetime
+// Update booking status dynamic rules based strictly on full DateTime comparison
 export function updateDynamicStatuses(bookings: Booking[], postInspections: PostInspection[] = []): Booking[] {
   const now = new Date();
 
   return bookings.map((b) => {
-    // If rejected or cancelled, keep as is
     if (b.status === 'rejected' || b.status === 'cancelled') {
       return b;
     }
 
-    // Calculate real-time status using full DateTime comparison
     const dynamicStatus = calculateBookingStatus(
       b.booking_date,
       b.start_time,
@@ -154,7 +631,6 @@ export function updateDynamicStatuses(bookings: Booking[], postInspections: Post
       now
     );
 
-    // Mark post_inspection_done if post inspection exists
     const hasPostInspection = postInspections.some((p) => p.booking_id === b.id);
 
     return {
@@ -165,12 +641,6 @@ export function updateDynamicStatuses(bookings: Booking[], postInspections: Post
   });
 }
 
-// Calculation logic for Laboratory Usage Percentage based on criteria:
-// 100% = ใช้งาน >= 5 วัน
-// 80% = ใช้งาน 4 วัน
-// 75% = ใช้งาน 3 วัน
-// 70% = ใช้งาน 2 วัน
-// < 2 วัน = (days / 5) * 100 (e.g. 1 วัน = 35% or 40%)
 export function calculateUsagePercentage(daysUsed: number): number {
   if (daysUsed >= 5) return 100;
   if (daysUsed === 4) return 80;
@@ -183,7 +653,6 @@ export function calculateUsagePercentage(daysUsed: number): number {
 export function computeLabStats(labs: Laboratory[], bookings: Booking[]): LabUsageStat[] {
   return labs.map((lab) => {
     const labBookings = bookings.filter((b) => b.lab_id === lab.id && b.status !== 'rejected' && b.status !== 'cancelled');
-    // Unique dates count
     const uniqueDates = new Set(labBookings.map((b) => b.booking_date));
     const totalDaysUsed = uniqueDates.size;
     const usagePercentage = calculateUsagePercentage(totalDaysUsed);
@@ -200,7 +669,7 @@ export function computeLabStats(labs: Laboratory[], bookings: Booking[]): LabUsa
 
 // SQL Generator Script for Supabase Schema
 export const SUPABASE_SQL_SCHEMA = `-- ===============================================
--- SUPABASE POSTGRESQL SCHEMA FOR NURSE LAB SYSTEM
+-- SUPABASE POSTGRESQL CENTRAL DATABASE SCHEMA
 -- ===============================================
 
 -- 1. Laboratories Table
@@ -251,6 +720,8 @@ CREATE TABLE IF NOT EXISTS public.bookings (
   assets JSONB DEFAULT '[]'::jsonb,
   terms_accepted BOOLEAN DEFAULT TRUE,
   rejection_reason TEXT,
+  pre_inspection_done BOOLEAN DEFAULT FALSE,
+  post_inspection_done BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -297,26 +768,38 @@ CREATE TABLE IF NOT EXISTS public.damages (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 7. Admin Settings Table
+CREATE TABLE IF NOT EXISTS public.admin_settings (
+  setting_key TEXT PRIMARY KEY,
+  setting_value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO public.admin_settings (setting_key, setting_value)
+VALUES ('admin_passcode', 'NURSEUTCC01')
+ON CONFLICT (setting_key) DO NOTHING;
+
 -- ENABLE ROW LEVEL SECURITY & CENTRAL ACCESS POLICIES
 ALTER TABLE public.laboratories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pre_inspection ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.post_inspection ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.damages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_settings ENABLE ROW LEVEL SECURITY;
 
--- 1. Laboratories: Public read for all users, Admin modify
+-- 1. Laboratories Policies
 CREATE POLICY "Public read laboratories" ON public.laboratories FOR SELECT USING (true);
 CREATE POLICY "Public insert laboratories" ON public.laboratories FOR INSERT WITH CHECK (true);
 CREATE POLICY "Public update laboratories" ON public.laboratories FOR UPDATE USING (true);
 CREATE POLICY "Public delete laboratories" ON public.laboratories FOR DELETE USING (true);
 
--- 2. Bookings: Public read and create for all users (No user_id isolation)
+-- 2. Bookings Policies
 CREATE POLICY "Public read all bookings" ON public.bookings FOR SELECT USING (true);
 CREATE POLICY "Public insert bookings" ON public.bookings FOR INSERT WITH CHECK (true);
 CREATE POLICY "Public update bookings" ON public.bookings FOR UPDATE USING (true);
 CREATE POLICY "Public delete bookings" ON public.bookings FOR DELETE USING (true);
 
--- 3. Inspection & Damages: Public read & full access for central system
+-- 3. Inspection & Damages Policies
 CREATE POLICY "Public read pre_inspection" ON public.pre_inspection FOR SELECT USING (true);
 CREATE POLICY "Public insert pre_inspection" ON public.pre_inspection FOR INSERT WITH CHECK (true);
 CREATE POLICY "Public update pre_inspection" ON public.pre_inspection FOR UPDATE USING (true);
@@ -329,4 +812,9 @@ CREATE POLICY "Public read damages" ON public.damages FOR SELECT USING (true);
 CREATE POLICY "Public insert damages" ON public.damages FOR INSERT WITH CHECK (true);
 CREATE POLICY "Public update damages" ON public.damages FOR UPDATE USING (true);
 CREATE POLICY "Public delete damages" ON public.damages FOR DELETE USING (true);
+
+-- 4. Admin Settings Policies
+CREATE POLICY "Public read admin_settings" ON public.admin_settings FOR SELECT USING (true);
+CREATE POLICY "Public update admin_settings" ON public.admin_settings FOR UPDATE USING (true);
 `;
+
