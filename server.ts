@@ -1,12 +1,103 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
+
+const DATA_DIR = path.join(process.cwd(), "data");
+const DB_FILE = path.join(DATA_DIR, "db.json");
+
+interface DbSchema {
+  laboratories: any[];
+  bookings: any[];
+  pre_inspection: any[];
+  post_inspection: any[];
+  damages: any[];
+  admin_settings: any[];
+  [key: string]: any[];
+}
+
+function loadDb(): DbSchema {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(DB_FILE)) {
+      const content = fs.readFileSync(DB_FILE, "utf-8");
+      return JSON.parse(content);
+    }
+  } catch (e) {
+    console.error("Error reading db.json:", e);
+  }
+  const defaultDb: DbSchema = {
+    laboratories: [],
+    bookings: [],
+    pre_inspection: [],
+    post_inspection: [],
+    damages: [],
+    admin_settings: [
+      { setting_key: "admin_passcode", setting_value: "NURSEUTCC01" }
+    ]
+  };
+  saveDb(defaultDb);
+  return defaultDb;
+}
+
+function saveDb(db: DbSchema) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
+  } catch (e) {
+    console.error("Error writing db.json:", e);
+  }
+}
+
+let sseClients: express.Response[] = [];
+
+function notifyRealtimeClients() {
+  sseClients = sseClients.filter((res) => {
+    try {
+      res.write(`data: ${JSON.stringify({ event: "change", timestamp: Date.now() })}\n\n`);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  });
+}
+
+function parsePostgRestFilters(query: Record<string, any>) {
+  const filters: { col: string; op: string; val: string }[] = [];
+  for (const [key, rawVal] of Object.entries(query)) {
+    if (["select", "order", "limit", "offset"].includes(key)) continue;
+    const strVal = String(rawVal);
+    if (strVal.startsWith("eq.")) {
+      filters.push({ col: key, op: "eq", val: strVal.slice(3) });
+    } else if (strVal.startsWith("neq.")) {
+      filters.push({ col: key, op: "neq", val: strVal.slice(4) });
+    }
+  }
+  return filters;
+}
+
+function matchesFilters(item: any, filters: { col: string; op: string; val: string }[]) {
+  return filters.every((f) => {
+    const itemVal = item[f.col];
+    if (f.op === "eq") {
+      return String(itemVal) === f.val;
+    }
+    if (f.op === "neq") {
+      return String(itemVal) !== f.val;
+    }
+    return true;
+  });
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
 
   // API Endpoints for simulation and system info
   app.get("/api/health", (_req, res) => {
@@ -32,6 +123,134 @@ async function startServer() {
         status: "sent"
       }
     });
+  });
+
+  // Realtime Event Endpoint
+  app.get("/rest/v1/realtime", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+    sseClients.push(res);
+
+    req.on("close", () => {
+      sseClients = sseClients.filter((client) => client !== res);
+    });
+  });
+
+  // Supabase REST Protocol compatibility layer
+  app.get("/rest/v1/:table", (req, res) => {
+    const table = req.params.table;
+    const db = loadDb();
+    let records = db[table] || [];
+
+    const filters = parsePostgRestFilters(req.query);
+    if (filters.length > 0) {
+      records = records.filter((r) => matchesFilters(r, filters));
+    }
+
+    if (req.query.order) {
+      const [col, dir] = String(req.query.order).split(".");
+      records.sort((a, b) => {
+        const valA = a[col] || "";
+        const valB = b[col] || "";
+        if (dir === "desc") return valA > valB ? -1 : 1;
+        return valA > valB ? 1 : -1;
+      });
+    }
+
+    const acceptHeader = req.headers["accept"] || "";
+    if (typeof acceptHeader === "string" && acceptHeader.includes("vnd.pgrst.object+json")) {
+      return res.json(records[0] || null);
+    }
+
+    res.json(records);
+  });
+
+  app.post("/rest/v1/:table", (req, res) => {
+    const table = req.params.table;
+    const db = loadDb();
+    if (!db[table]) db[table] = [];
+
+    const body = req.body;
+    const itemsToInsert = Array.isArray(body) ? body : [body];
+
+    const inserted: any[] = [];
+    for (const item of itemsToInsert) {
+      const record = {
+        ...item,
+        created_at: item.created_at || new Date().toISOString()
+      };
+      // Upsert logic if id exists
+      if (record.id) {
+        const existingIdx = db[table].findIndex((r) => String(r.id) === String(record.id));
+        if (existingIdx >= 0) {
+          db[table][existingIdx] = { ...db[table][existingIdx], ...record };
+          inserted.push(db[table][existingIdx]);
+          continue;
+        }
+      }
+      db[table].unshift(record);
+      inserted.push(record);
+    }
+
+    saveDb(db);
+    notifyRealtimeClients();
+
+    console.log(`[SUPABASE DB INSERT RESULT ${table}]`, inserted);
+    res.status(201).json(inserted);
+  });
+
+  app.patch("/rest/v1/:table", (req, res) => {
+    const table = req.params.table;
+    const db = loadDb();
+    if (!db[table]) db[table] = [];
+
+    const filters = parsePostgRestFilters(req.query);
+    const updates = req.body || {};
+
+    const updated: any[] = [];
+    db[table] = db[table].map((r) => {
+      if (filters.length === 0 || matchesFilters(r, filters)) {
+        const newRecord = { ...r, ...updates };
+        updated.push(newRecord);
+        return newRecord;
+      }
+      return r;
+    });
+
+    saveDb(db);
+    notifyRealtimeClients();
+
+    console.log(`[SUPABASE DB UPDATE RESULT ${table}]`, updated);
+    res.json(updated);
+  });
+
+  app.delete("/rest/v1/:table", (req, res) => {
+    const table = req.params.table;
+    const db = loadDb();
+    if (!db[table]) db[table] = [];
+
+    const filters = parsePostgRestFilters(req.query);
+    const remaining: any[] = [];
+    const deleted: any[] = [];
+
+    for (const r of db[table]) {
+      if (filters.length > 0 && matchesFilters(r, filters)) {
+        deleted.push(r);
+      } else {
+        remaining.push(r);
+      }
+    }
+
+    db[table] = remaining;
+    saveDb(db);
+    notifyRealtimeClients();
+
+    console.log(`[SUPABASE DB DELETE RESULT ${table}]`, deleted);
+    res.json(deleted);
   });
 
   // Vite middleware for development

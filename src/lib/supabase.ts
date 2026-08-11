@@ -31,22 +31,39 @@ export function getSupabaseConfig(): SupabaseConfig {
   try {
     const saved = localStorage.getItem(STORAGE_KEY_SUPABASE);
     if (saved) {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      if (parsed.url && parsed.anonKey) {
+        return parsed;
+      }
     }
   } catch (e) {
     console.warn('Failed to parse Supabase config', e);
   }
   const metaEnv = (import.meta as { env?: Record<string, string> }).env || {};
+  const envUrl = metaEnv.VITE_SUPABASE_URL || '';
+  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || '';
+
+  if (envUrl && envKey) {
+    return {
+      url: envUrl,
+      anonKey: envKey,
+      isConnected: true
+    };
+  }
+
+  // Always fallback to current origin REST endpoint so client is NEVER null
+  const defaultUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   return {
-    url: metaEnv.VITE_SUPABASE_URL || '',
-    anonKey: metaEnv.VITE_SUPABASE_ANON_KEY || '',
-    isConnected: false
+    url: defaultUrl,
+    anonKey: 'local-supabase-anon-key',
+    isConnected: true
   };
 }
 
 export function saveSupabaseConfig(config: SupabaseConfig) {
   try {
     localStorage.setItem(STORAGE_KEY_SUPABASE, JSON.stringify(config));
+    supabaseInstance = null;
   } catch (e) {
     console.error('Failed to save Supabase config', e);
   }
@@ -54,15 +71,12 @@ export function saveSupabaseConfig(config: SupabaseConfig) {
 
 let supabaseInstance: SupabaseClient | null = null;
 
-export function getSupabaseClient(): SupabaseClient | null {
+export function getSupabaseClient(): SupabaseClient {
   const config = getSupabaseConfig();
-  if (config.url && config.anonKey) {
-    if (!supabaseInstance) {
-      supabaseInstance = createClient(config.url, config.anonKey);
-    }
-    return supabaseInstance;
+  if (!supabaseInstance) {
+    supabaseInstance = createClient(config.url, config.anonKey);
   }
-  return null;
+  return supabaseInstance;
 }
 
 export interface AppStoreData {
@@ -75,14 +89,14 @@ export interface AppStoreData {
   isAdminAuthenticated: boolean;
 }
 
-// Memory fallback cache in runtime (No localStorage persistence for store data)
+// Memory fallback cache in runtime
 let memoryStore: AppStoreData = {
-  labs: INITIAL_LABS,
-  inventory: INITIAL_INVENTORY,
-  bookings: INITIAL_BOOKINGS,
-  preInspections: INITIAL_PRE_INSPECTIONS,
-  postInspections: INITIAL_POST_INSPECTIONS,
-  damages: INITIAL_DAMAGES,
+  labs: [],
+  inventory: [],
+  bookings: [],
+  preInspections: [],
+  postInspections: [],
+  damages: [],
   isAdminAuthenticated: false
 };
 
@@ -93,7 +107,6 @@ let memoryStore: AppStoreData = {
 // --- Laboratories ---
 export async function getLabs(): Promise<Laboratory[]> {
   const client = getSupabaseClient();
-  if (!client) return memoryStore.labs;
 
   try {
     const { data, error } = await client.from('laboratories').select('*').order('code', { ascending: true });
@@ -102,166 +115,130 @@ export async function getLabs(): Promise<Laboratory[]> {
       return memoryStore.labs;
     }
     console.log('LOAD RESULT', data);
-    if (!data || data.length === 0) {
-      // Seed initial labs to Supabase central database if table is empty
-      await seedInitialLabs(client);
-      return INITIAL_LABS;
-    }
-    memoryStore.labs = data.map((item) => ({
-      id: item.id,
-      code: item.code,
-      name: item.name,
-      building: item.building,
-      floor: item.floor,
-      capacity: Number(item.capacity),
-      description: item.description || '',
-      image_url: item.image_url || '',
-      is_ready: item.is_ready ?? true,
-      created_at: item.created_at || new Date().toISOString()
+    const labs: Laboratory[] = (data || []).map((item) => ({
+      id: String(item.id),
+      code: String(item.code || ''),
+      name: String(item.name || ''),
+      building: String(item.building || ''),
+      floor: String(item.floor || ''),
+      capacity: Number(item.capacity || 0),
+      description: String(item.description || ''),
+      image_url: String(item.image_url || ''),
+      is_ready: Boolean(item.is_ready ?? true),
+      created_at: String(item.created_at || new Date().toISOString())
     }));
-    return memoryStore.labs;
+    memoryStore.labs = labs;
+    return labs;
   } catch (err) {
     console.error('getLabs exception:', err);
     return memoryStore.labs;
   }
 }
 
-async function seedInitialLabs(client: SupabaseClient) {
-  try {
-    const payload = INITIAL_LABS.map((l) => ({
-      id: l.id,
-      code: l.code,
-      name: l.name,
-      building: l.building,
-      floor: l.floor,
-      capacity: l.capacity,
-      description: l.description,
-      image_url: l.image_url,
-      is_ready: l.is_ready
-    }));
-    const { data, error } = await client.from('laboratories').upsert(payload).select();
-    if (error) console.error('SEED LABS ERROR:', error);
-    else console.log('INSERT RESULT (SEED LABS)', data);
-  } catch (e) {
-    console.error('Failed to seed initial labs:', e);
-  }
-}
-
 export async function createLab(lab: Laboratory): Promise<Laboratory> {
-  memoryStore.labs = [lab, ...memoryStore.labs];
   const client = getSupabaseClient();
-  if (client) {
-    try {
-      const { data, error } = await client.from('laboratories').insert({
-        id: lab.id,
-        code: lab.code,
-        name: lab.name,
-        building: lab.building,
-        floor: lab.floor,
-        capacity: lab.capacity,
-        description: lab.description,
-        image_url: lab.image_url,
-        is_ready: lab.is_ready
-      }).select();
-      if (error) {
-        console.error('INSERT LAB ERROR:', error);
-      } else {
-        console.log('INSERT RESULT', data);
-      }
-    } catch (e) {
-      console.error('createLab error:', e);
+  try {
+    const payload = {
+      id: lab.id,
+      code: lab.code,
+      name: lab.name,
+      building: lab.building,
+      floor: lab.floor,
+      capacity: lab.capacity,
+      description: lab.description,
+      image_url: lab.image_url,
+      is_ready: lab.is_ready,
+      created_at: lab.created_at || new Date().toISOString()
+    };
+    const { data, error } = await client.from('laboratories').insert(payload).select();
+    if (error) {
+      console.error('INSERT LAB ERROR:', error);
+    } else {
+      console.log('INSERT RESULT', data);
     }
+  } catch (e) {
+    console.error('createLab error:', e);
   }
   return lab;
 }
 
 export async function updateLab(lab: Laboratory): Promise<Laboratory> {
-  memoryStore.labs = memoryStore.labs.map((l) => (l.id === lab.id ? lab : l));
   const client = getSupabaseClient();
-  if (client) {
-    try {
-      const { data, error } = await client.from('laboratories').update({
-        code: lab.code,
-        name: lab.name,
-        building: lab.building,
-        floor: lab.floor,
-        capacity: lab.capacity,
-        description: lab.description,
-        image_url: lab.image_url,
-        is_ready: lab.is_ready
-      }).eq('id', lab.id).select();
-      if (error) {
-        console.error('UPDATE LAB ERROR:', error);
-      } else {
-        console.log('UPDATE RESULT', data);
-      }
-    } catch (e) {
-      console.error('updateLab error:', e);
+  try {
+    const payload = {
+      code: lab.code,
+      name: lab.name,
+      building: lab.building,
+      floor: lab.floor,
+      capacity: lab.capacity,
+      description: lab.description,
+      image_url: lab.image_url,
+      is_ready: lab.is_ready
+    };
+    const { data, error } = await client.from('laboratories').update(payload).eq('id', lab.id).select();
+    if (error) {
+      console.error('UPDATE LAB ERROR:', error);
+    } else {
+      console.log('UPDATE RESULT', data);
     }
+  } catch (e) {
+    console.error('updateLab error:', e);
   }
   return lab;
 }
 
 export async function deleteLab(labId: string): Promise<void> {
-  memoryStore.labs = memoryStore.labs.filter((l) => l.id !== labId);
   const client = getSupabaseClient();
-  if (client) {
-    try {
-      const { data, error } = await client.from('laboratories').delete().eq('id', labId).select();
-      if (error) {
-        console.error('DELETE LAB ERROR:', error);
-      } else {
-        console.log('DELETE RESULT', data);
-      }
-    } catch (e) {
-      console.error('deleteLab error:', e);
+  try {
+    const { data, error } = await client.from('laboratories').delete().eq('id', labId).select();
+    if (error) {
+      console.error('DELETE LAB ERROR:', error);
+    } else {
+      console.log('DELETE RESULT', data);
     }
+  } catch (e) {
+    console.error('deleteLab error:', e);
   }
 }
 
 // --- Bookings ---
 export async function getBookings(): Promise<Booking[]> {
   const client = getSupabaseClient();
-  if (!client) return memoryStore.bookings;
 
   try {
     const { data, error } = await client.from('bookings').select('*').order('created_at', { ascending: false });
     if (error) {
-      console.error('Error fetching bookings:', error);
+      console.error('LOAD BOOKINGS ERROR:', error);
       return memoryStore.bookings;
     }
     console.log('LOAD RESULT', data);
-    if (!data || data.length === 0) {
-      await seedInitialBookings(client);
-      return updateDynamicStatuses(INITIAL_BOOKINGS, memoryStore.postInspections);
-    }
-    const formatted: Booking[] = data.map((item) => ({
-      id: item.id,
-      booking_code: item.booking_code,
-      requester_name: item.requester_name,
-      department: item.department,
-      faculty: item.faculty,
-      phone: item.phone,
-      email: item.email,
-      subject_code: item.subject_code,
-      subject_name: item.subject_name,
-      activity_name: item.activity_name,
-      objective: item.objective || '',
+    const formatted: Booking[] = (data || []).map((item) => ({
+      id: String(item.id),
+      booking_code: String(item.booking_code || ''),
+      requester_name: String(item.requester_name || ''),
+      department: String(item.department || ''),
+      faculty: String(item.faculty || ''),
+      phone: String(item.phone || ''),
+      email: String(item.email || ''),
+      subject_code: String(item.subject_code || ''),
+      subject_name: String(item.subject_name || ''),
+      activity_name: String(item.activity_name || ''),
+      objective: String(item.objective || ''),
       participant_count: Number(item.participant_count || 1),
-      lab_id: item.lab_id,
-      lab_name: item.lab_name,
-      booking_date: item.booking_date,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      status: item.status,
+      lab_id: String(item.lab_id || ''),
+      lab_name: String(item.lab_name || ''),
+      booking_date: String(item.booking_date || ''),
+      start_time: String(item.start_time || ''),
+      end_time: String(item.end_time || ''),
+      status: item.status || 'pending',
       consumables: item.consumables || [],
       medical_equipment: item.medical_equipment || [],
       assets: item.assets || [],
-      terms_accepted: item.terms_accepted ?? true,
+      terms_accepted: Boolean(item.terms_accepted ?? true),
       rejection_reason: item.rejection_reason,
-      pre_inspection_done: item.pre_inspection_done ?? false,
-      post_inspection_done: item.post_inspection_done ?? false,
-      created_at: item.created_at || new Date().toISOString()
+      pre_inspection_done: Boolean(item.pre_inspection_done ?? false),
+      post_inspection_done: Boolean(item.post_inspection_done ?? false),
+      created_at: String(item.created_at || new Date().toISOString())
     }));
     memoryStore.bookings = updateDynamicStatuses(formatted, memoryStore.postInspections);
     return memoryStore.bookings;
@@ -271,122 +248,84 @@ export async function getBookings(): Promise<Booking[]> {
   }
 }
 
-async function seedInitialBookings(client: SupabaseClient) {
-  try {
-    const payload = INITIAL_BOOKINGS.map((b) => ({
-      id: b.id,
-      booking_code: b.booking_code,
-      requester_name: b.requester_name,
-      department: b.department,
-      faculty: b.faculty,
-      phone: b.phone,
-      email: b.email,
-      subject_code: b.subject_code,
-      subject_name: b.subject_name,
-      activity_name: b.activity_name,
-      objective: b.objective,
-      participant_count: b.participant_count,
-      lab_id: b.lab_id,
-      lab_name: b.lab_name,
-      booking_date: b.booking_date,
-      start_time: b.start_time,
-      end_time: b.end_time,
-      status: b.status,
-      consumables: b.consumables,
-      medical_equipment: b.medical_equipment,
-      assets: b.assets,
-      terms_accepted: b.terms_accepted,
-      rejection_reason: b.rejection_reason
-    }));
-    const { data, error } = await client.from('bookings').upsert(payload).select();
-    if (error) console.error('SEED BOOKINGS ERROR:', error);
-    else console.log('INSERT RESULT (SEED BOOKINGS)', data);
-  } catch (e) {
-    console.error('Failed to seed initial bookings:', e);
-  }
-}
-
 export async function createBooking(booking: Booking): Promise<Booking> {
-  memoryStore.bookings = [booking, ...memoryStore.bookings];
   const client = getSupabaseClient();
-  if (client) {
-    try {
-      const { data, error } = await client.from('bookings').insert({
-        id: booking.id,
-        booking_code: booking.booking_code,
-        requester_name: booking.requester_name,
-        department: booking.department,
-        faculty: booking.faculty,
-        phone: booking.phone,
-        email: booking.email,
-        subject_code: booking.subject_code,
-        subject_name: booking.subject_name,
-        activity_name: booking.activity_name,
-        objective: booking.objective,
-        participant_count: booking.participant_count,
-        lab_id: booking.lab_id,
-        lab_name: booking.lab_name,
-        booking_date: booking.booking_date,
-        start_time: booking.start_time,
-        end_time: booking.end_time,
-        status: booking.status,
-        consumables: booking.consumables,
-        medical_equipment: booking.medical_equipment,
-        assets: booking.assets,
-        terms_accepted: booking.terms_accepted,
-        rejection_reason: booking.rejection_reason
-      }).select();
-      if (error) {
-        console.error('INSERT BOOKING ERROR:', error);
-      } else {
-        console.log('INSERT RESULT', data);
-      }
-    } catch (e) {
-      console.error('createBooking error:', e);
+  try {
+    const payload = {
+      id: booking.id,
+      booking_code: booking.booking_code,
+      requester_name: booking.requester_name,
+      department: booking.department,
+      faculty: booking.faculty,
+      phone: booking.phone,
+      email: booking.email,
+      subject_code: booking.subject_code,
+      subject_name: booking.subject_name,
+      activity_name: booking.activity_name,
+      objective: booking.objective,
+      participant_count: booking.participant_count,
+      lab_id: booking.lab_id,
+      lab_name: booking.lab_name,
+      booking_date: booking.booking_date,
+      start_time: booking.start_time,
+      end_time: booking.end_time,
+      status: booking.status,
+      consumables: booking.consumables,
+      medical_equipment: booking.medical_equipment,
+      assets: booking.assets,
+      terms_accepted: booking.terms_accepted,
+      rejection_reason: booking.rejection_reason,
+      created_at: booking.created_at || new Date().toISOString()
+    };
+    const { data, error } = await client.from('bookings').insert(payload).select();
+    if (error) {
+      console.error('INSERT BOOKING ERROR:', error);
+    } else {
+      console.log('INSERT RESULT', data);
     }
+  } catch (e) {
+    console.error('createBooking error:', e);
   }
   return booking;
 }
 
 export async function updateBooking(booking: Booking): Promise<Booking> {
-  memoryStore.bookings = memoryStore.bookings.map((b) => (b.id === booking.id ? booking : b));
   const client = getSupabaseClient();
-  if (client) {
-    try {
-      const { data, error } = await client.from('bookings').update({
-        booking_code: booking.booking_code,
-        requester_name: booking.requester_name,
-        department: booking.department,
-        faculty: booking.faculty,
-        phone: booking.phone,
-        email: booking.email,
-        subject_code: booking.subject_code,
-        subject_name: booking.subject_name,
-        activity_name: booking.activity_name,
-        objective: booking.objective,
-        participant_count: booking.participant_count,
-        lab_id: booking.lab_id,
-        lab_name: booking.lab_name,
-        booking_date: booking.booking_date,
-        start_time: booking.start_time,
-        end_time: booking.end_time,
-        status: booking.status,
-        consumables: booking.consumables,
-        medical_equipment: booking.medical_equipment,
-        assets: booking.assets,
-        terms_accepted: booking.terms_accepted,
-        rejection_reason: booking.rejection_reason,
-        pre_inspection_done: booking.pre_inspection_done,
-        post_inspection_done: booking.post_inspection_done
-      }).eq('id', booking.id).select();
-      if (error) {
-        console.error('UPDATE BOOKING ERROR:', error);
-      } else {
-        console.log('UPDATE RESULT', data);
-      }
-    } catch (e) {
-      console.error('updateBooking error:', e);
+  try {
+    const payload = {
+      booking_code: booking.booking_code,
+      requester_name: booking.requester_name,
+      department: booking.department,
+      faculty: booking.faculty,
+      phone: booking.phone,
+      email: booking.email,
+      subject_code: booking.subject_code,
+      subject_name: booking.subject_name,
+      activity_name: booking.activity_name,
+      objective: booking.objective,
+      participant_count: booking.participant_count,
+      lab_id: booking.lab_id,
+      lab_name: booking.lab_name,
+      booking_date: booking.booking_date,
+      start_time: booking.start_time,
+      end_time: booking.end_time,
+      status: booking.status,
+      consumables: booking.consumables,
+      medical_equipment: booking.medical_equipment,
+      assets: booking.assets,
+      terms_accepted: booking.terms_accepted,
+      rejection_reason: booking.rejection_reason,
+      pre_inspection_done: booking.pre_inspection_done,
+      post_inspection_done: booking.post_inspection_done
+    };
+    const { data, error } = await client.from('bookings').update(payload).eq('id', booking.id).select();
+    if (error) {
+      console.error('UPDATE BOOKING ERROR:', error);
+    } else {
+      console.log('UPDATE RESULT', data);
     }
+  } catch (e) {
+    console.error('updateBooking error:', e);
   }
   return booking;
 }
@@ -641,7 +580,34 @@ export async function fetchFullStore(isAdminAuth: boolean = false): Promise<AppS
 // --- Supabase Realtime Subscription ---
 export function subscribeToStoreChanges(onStoreUpdate: (data: AppStoreData) => void): () => void {
   const client = getSupabaseClient();
-  if (!client) return () => {};
+  const config = getSupabaseConfig();
+
+  // If connected to local origin REST endpoint, use EventSource SSE for realtime
+  if (typeof window !== 'undefined' && (config.url.includes(window.location.host) || config.url.includes('localhost') || config.url === window.location.origin)) {
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/rest/v1/realtime');
+      eventSource.onmessage = async (e) => {
+        try {
+          const parsed = JSON.parse(e.data);
+          if (parsed.event === 'change') {
+            const fresh = await fetchFullStore();
+            onStoreUpdate(fresh);
+          }
+        } catch (err) {
+          console.error('Realtime SSE parse error:', err);
+        }
+      };
+    } catch (e) {
+      console.error('EventSource error:', e);
+    }
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }
 
   const channel = client
     .channel('public-central-db')

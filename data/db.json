@@ -1,0 +1,13 @@
+{
+  "laboratories": [],
+  "bookings": [],
+  "pre_inspection": [],
+  "post_inspection": [],
+  "damages": [],
+  "admin_settings": [
+    {
+      "setting_key": "admin_passcode",
+      "setting_value": "NURSEUTCC01"
+    }
+  ]
+}

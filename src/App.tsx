@@ -119,11 +119,9 @@ export default function App() {
 
   // Add new booking handler
   const handleCreateBooking = async (newBooking: Booking) => {
-    const saved = await createBooking(newBooking);
-    setStore((prev) => ({
-      ...prev,
-      bookings: [saved, ...prev.bookings]
-    }));
+    await createBooking(newBooking);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
     setActiveTab('dashboard');
   };
 
@@ -134,11 +132,8 @@ export default function App() {
 
     const updated: Booking = { ...booking, status: 'approved' as const };
     await updateBooking(updated);
-
-    setStore((prev) => ({
-      ...prev,
-      bookings: prev.bookings.map((b) => (b.id === bookingId ? updated : b))
-    }));
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   // Admin Reject booking handler
@@ -148,81 +143,59 @@ export default function App() {
 
     const updated: Booking = { ...booking, status: 'rejected' as const, rejection_reason: reason };
     await updateBooking(updated);
-
-    setStore((prev) => ({
-      ...prev,
-      bookings: prev.bookings.map((b) => (b.id === bookingId ? updated : b))
-    }));
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   // Update Booking (User or Admin edit)
   const handleUpdateBooking = async (updated: Booking) => {
     await updateBooking(updated);
-    setStore((prev) => ({
-      ...prev,
-      bookings: prev.bookings.map((b) => (b.id === updated.id ? updated : b))
-    }));
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   // Lab CRUD handlers
   const handleAddLab = async (lab: Laboratory) => {
-    const saved = await createLab(lab);
-    setStore((prev) => ({ ...prev, labs: [saved, ...prev.labs] }));
+    await createLab(lab);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   const handleEditLab = async (lab: Laboratory) => {
     await updateLab(lab);
-    setStore((prev) => ({
-      ...prev,
-      labs: prev.labs.map((l) => (l.id === lab.id ? lab : l))
-    }));
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   const handleDeleteLab = async (labId: string) => {
     await deleteLab(labId);
-    setStore((prev) => ({
-      ...prev,
-      labs: prev.labs.filter((l) => l.id !== labId)
-    }));
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   // Inspection & Damage handlers
   const handleSavePreInspection = async (inspection: PreInspection) => {
-    const saved = await createPreInspection(inspection);
-    setStore((prev) => ({
-      ...prev,
-      preInspections: [saved, ...prev.preInspections],
-      bookings: prev.bookings.map((b) =>
-        b.id === inspection.booking_id ? { ...b, pre_inspection_done: true } : b
-      )
-    }));
+    await createPreInspection(inspection);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   const handleSavePostInspection = async (inspection: PostInspection) => {
-    const saved = await createPostInspection(inspection);
-    setStore((prev) => ({
-      ...prev,
-      postInspections: [saved, ...prev.postInspections],
-      bookings: prev.bookings.map((b) =>
-        b.id === inspection.booking_id ? { ...b, status: 'completed' as const, post_inspection_done: true } : b
-      )
-    }));
+    await createPostInspection(inspection);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   const handleSaveDamage = async (damage: DamageLog) => {
-    const saved = await createDamage(damage);
-    setStore((prev) => ({
-      ...prev,
-      damages: [saved, ...prev.damages]
-    }));
+    await createDamage(damage);
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   const handleDeleteDamage = async (damageId: string) => {
     await deleteDamage(damageId);
-    setStore((prev) => ({
-      ...prev,
-      damages: prev.damages.filter((d) => d.id !== damageId)
-    }));
+    const fresh = await fetchFullStore(store.isAdminAuthenticated);
+    setStore((prev) => ({ ...fresh, isAdminAuthenticated: prev.isAdminAuthenticated }));
   };
 
   const pendingCount = store.bookings.filter((b) => b.status === 'pending').length;
